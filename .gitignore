@@ -1,1 +1,8 @@
+# python stuff
+venv
+*.egg-info
+__pycache__
+
+# downloaded replays
 replays
+
