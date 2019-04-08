@@ -12,8 +12,6 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.util import nest
 
-#from dsmash.ssbm import SimpleButton
-
 Buttons = event.Buttons
 Physical = Buttons.Physical
 Logical = Buttons.Logical
@@ -174,12 +172,6 @@ def compress_repeated_actions(state_actions, max_repeat=15):
 def nt_to_np(nts):
   return nest.map_structure(lambda *xs: np.array(xs), *nts)
 
-stream_files = []
-replay_path = 'Gang-Steals'
-for dirpath, _, filenames in os.walk('replays/' + replay_path):
-  for fname in filenames:
-    stream_files.append(os.path.join(dirpath, fname))
-
 test_file = 'replays/Gang-Steals/15/Game_20190309T113739.slp'
 #test_game = Game(test_file)
 #print(len(test_game.frames))
@@ -193,8 +185,8 @@ def load_supervised_data(replay_files):
     #print('loading', f)
     try:
       game = Game(f)
-    except ubjson.decoder.DecoderException:
-      print('ubjson error on: %s' % f)
+    except Exception as e:
+      print(f, e)
       continue
     try:
       check_valid(game)
@@ -202,35 +194,61 @@ def load_supervised_data(replay_files):
       valid_files += 1
     except InvalidGameError as e:
       print(e)
-    elapsed_time = time.time() - start_time
-    time_per_file = elapsed_time / (i+1)
-    remaining_time = time_per_file * (len(replay_files) - i - 1)
-    print('%.f %.2f %.f' % (elapsed_time, time_per_file, remaining_time))
-    
+    if i % 10 == 0:
+      elapsed_time = time.time() - start_time
+      time_per_file = elapsed_time / (i+1)
+      remaining_time = time_per_file * (len(replay_files) - i - 1)
+      print('%d %d %.f %.2f %.f' % (i, valid_files, elapsed_time, time_per_file, remaining_time))
+
     #if elapsed_time > 30: break
   print(valid_files, len(replay_files))
 
-rollouts = load_supervised_data(stream_files)
-compressed_rollouts = map(compress_repeated_actions, rollouts)
-compressed_rollouts_np = list(map(nt_to_np, compressed_rollouts))
-compressed_rollouts_np_pkl = pickle.dumps(compressed_rollouts_np)
 
-print(len(compressed_rollouts_np_pkl))
+def create_np_dataset(replay_path):
+  stream_files = []
+  for dirpath, _, filenames in os.walk('replays/' + replay_path):
+    for fname in filenames:
+      stream_files.append(os.path.join(dirpath, fname))
 
-save_path = 'il-data/%s.pkl' % replay_path
-save_dir = save_path.rsplit('/', 1)[0]
-os.makedirs(save_dir, exist_ok=True)
-with open(save_path, 'wb') as f:
-  f.write(compressed_rollouts_np_pkl)
+  rollouts = load_supervised_data(stream_files)
+  compressed_rollouts = map(compress_repeated_actions, rollouts)
+  compressed_rollouts_np = list(map(nt_to_np, compressed_rollouts))
+  compressed_rollouts_np_pkl = pickle.dumps(compressed_rollouts_np)
+  
+  print(len(compressed_rollouts_np_pkl))
+  
+  save_path = 'il-data/%s.pkl' % replay_path
+  save_dir = save_path.rsplit('/', 1)[0]
+  os.makedirs(save_dir, exist_ok=True)
+  with open(save_path, 'wb') as f:
+    f.write(compressed_rollouts_np_pkl)
 
-total_actions = 0
-total_repeats = 0
-max_repeats = 0
-for state_actions in compressed_data:
-  repeats = state_actions.action.repeat
-  total_actions += len(repeats)
-  total_repeats += repeats.sum()
-  max_repeats = max(repeats.max(), max_repeats)
 
-print(total_actions, total_repeats / total_actions, max_repeats)
+def compute_stats(path):
+  replay_path = 'Gang-Steals'
+  save_path = 'il-data/%s.pkl' % replay_path
+  with open(save_path, 'rb') as f:
+    compressed_rollouts_np = pickle.load(f)
+  
+  total_actions = 0
+  total_repeats = 0
+  max_repeats = 0
+  for state_actions in compressed_rollouts_np:
+    repeats = state_actions.action.repeat
+    total_actions += len(repeats)
+    total_repeats += repeats.sum()
+    max_repeats = max(repeats.max(), max_repeats)
+  
+  print(total_actions, total_repeats / total_actions, max_repeats)
 
+if __name__ == '__main__':
+  import argparse
+  parser = argparse.argument_parser()
+  parser.add_option('replay_path', type=str, help='root dir containing raw .slp replays')
+  parser.add_option('--stats', action='store_true', help='compute stats instead of making dataset')
+  args = parser.parse_args()
+
+  if args.stats:
+    compute_stats(args.replay_path)
+  else:
+    create_np_dataset(args.replay_path)
