@@ -78,7 +78,8 @@ simple_controller_config = SimpleController(
 
 repeated_simple_controller_config = RepeatedAction(
   action = simple_controller_config,
-  repeat = Discrete(15))
+  repeat = Discrete(16)  # repeat is 1-indexed, so we increase dimension
+)
 
 
 def to_multidiscrete(config):
