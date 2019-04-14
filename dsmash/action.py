@@ -59,7 +59,7 @@ class Binary:
     return Bernoulli()
 
   def space(self):
-    spaces.Discrete(2)
+    return spaces.Discrete(2)
 
 BINARY = Binary()
 

@@ -181,21 +181,9 @@ def load_supervised_data(replay_files, discretize):
 
 
 def create_np_dataset(replay_path, compress=False, discretize=False):
-  compress = compress and discretize
-  stream_files = []
-  for dirpath, _, filenames in os.walk(replay_path):
-    for fname in filenames:
-      stream_files.append(os.path.join(dirpath, fname))
+  discretize = compress or discretize
 
-  rollouts = load_supervised_data(stream_files[:10], discretize)
-  if compress:
-    rollouts = map(compress_repeated_actions, rollouts)
-  rollouts_np = list(map(nt_to_np, rollouts))
-  rollouts_np_pkl = pickle.dumps(rollouts_np)
-  
-  print(len(rollouts_np_pkl))
-  
-  suffix = ''
+  suffix = '_raw'
   if compress:
     suffix = '_compressed'
   elif discretize:
@@ -205,6 +193,20 @@ def create_np_dataset(replay_path, compress=False, discretize=False):
   save_path = replay_path.replace('replays', 'il-data', 1)
   save_path = save_path.rstrip('/') + suffix
   print('saving to', save_path)
+
+  stream_files = []
+  for dirpath, _, filenames in os.walk(replay_path):
+    for fname in filenames:
+      stream_files.append(os.path.join(dirpath, fname))
+
+  rollouts = load_supervised_data(stream_files, discretize)
+  if compress:
+    rollouts = map(compress_repeated_actions, rollouts)
+  rollouts_np = list(map(nt_to_np, rollouts))
+  rollouts_np_pkl = pickle.dumps(rollouts_np)
+  
+  print(len(rollouts_np_pkl))
+  
   save_dir = save_path.rsplit('/', 1)[0]
   os.makedirs(save_dir, exist_ok=True)
   with open(save_path, 'wb') as f:
@@ -236,6 +238,7 @@ if __name__ == '__main__':
   args = parser.parse_args()
 
   if args.stats:
-    compute_stats(args.replay_path, compress=args.compress, discretize=args.discrete)
+    compute_stats(args.replay_path)
   else:
-    create_np_dataset(args.replay_path)
+    create_np_dataset(args.replay_path, compress=args.compress, discretize=args.discrete)
+
