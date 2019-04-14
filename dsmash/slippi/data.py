@@ -1,42 +1,20 @@
-import enum
-from functools import partial
 import os
 import pickle
 import time
+
+import numpy as np
+from tensorflow.python.util import nest
 
 import ubjson
 import slippi
 from slippi import Game, event
 
-import numpy as np
-import tensorflow as tf
-from tensorflow.python.util import nest
+from dsmash.action import discrete_trigger, discrete_stick
+from dsmash.slippi.types import *
 
 Buttons = event.Buttons
 Physical = Buttons.Physical
 Logical = Buttons.Logical
-
-class DiscreteFloat:
-  def __init__(self, values):
-    self._values = np.array(values, dtype=np.float32)
-    self._cutoffs = (self._values[:-1] + self._values[1:]) / 2
-  
-  @property
-  def size(self):
-    return len(self._values)
-  
-  def to_discrete(self, x):
-    return np.searchsorted(self._cutoffs, x)
-
-  def to_float(self, i):
-    return self._values[i]
-
-discrete_trigger = DiscreteFloat([0, 0.5, 0.9, 1])
-discrete_stick = DiscreteFloat([-1, -0.5, -0.2, 0, 0.2, 0.5, 1])
-
-from collections import namedtuple
-SimpleButtons = namedtuple("SimpleButtons", "A B Z Y L DPAD_UP")
-
 
 class InvalidGameError(ValueError):
   pass
@@ -55,14 +33,6 @@ def get_simple_buttons(pre):
   )
 
 
-class SimpleCStick(enum.IntEnum):
-  NONE = 0
-  CSTICK_RIGHT = 1
-  CSTICK_LEFT = 2
-  CSTICK_DOWN = 3
-  CSTICK_UP = 4
-
-
 def get_simple_c(pre):
   logical = pre.buttons.logical
   if logical & Logical.CSTICK_RIGHT:
@@ -76,24 +46,22 @@ def get_simple_c(pre):
   return SimpleCStick.NONE
 
 
-SimpleController = namedtuple('SimpleController', 'buttons joystick cstick trigger')
-Stick = namedtuple('Stick', 'x y')
-
-def get_simple_controller(player):
+def get_simple_controller(player, discretize):
   pre = player.pre
+  id_fn = lambda x: x
+  joystick_fn = discrete_stick.to_discrete if discretize else id_fn
+  trigger_fn = discrete_trigger.to_discrete if discretize else id_fn
   
   return SimpleController(
       buttons=get_simple_buttons(pre),
       joystick=Stick(
-          x=discrete_stick.to_discrete(pre.joystick.x),
-          y=discrete_stick.to_discrete(pre.joystick.y),
+          x=joystick_fn(pre.joystick.x),
+          y=joystick_fn(pre.joystick.y),
       ),
       cstick=get_simple_c(pre),
-      trigger=discrete_trigger.to_discrete(pre.triggers.logical),
+      trigger=trigger_fn(pre.triggers.logical)
   )
 
-
-Player = namedtuple('Player', 'x y character action_state action_frame damage shield')
 
 def get_player(player):
   post = player.post
@@ -107,12 +75,9 @@ def get_player(player):
       shield=post.shield,
   )
 
-State = namedtuple('State', 'players stage')
-StateAction = namedtuple('StateAction', 'state action')
-
-def get_state_actions(ports, start, frame):
+def get_state_actions(ports, start, frame, discretize=True):
   players = [get_player(frame.ports[p].leader) for p in ports]
-  actions = [get_simple_controller(frame.ports[p].leader) for p in ports]
+  actions = [get_simple_controller(frame.ports[p].leader, discretize) for p in ports]
 
   return (
       StateAction(State(tuple(players), start.stage), actions[0]),
@@ -120,11 +85,24 @@ def get_state_actions(ports, start, frame):
   )
 
 # TODO: check for other conditions?
-def check_valid(game):
+def check_valid(game, min_len=2):
+  """Checks that the game is valid for training.
+  
+  Current disqualifiers are:
+  - teams
+  - game length
+  - non-human (CPU) player
+  - ice climbers
+
+  Args:
+    game: The Game object.
+    min_len: Minimum game length in minutes.
+  Raises:
+    InvalidGameError if the game is invalid.
+  """
   if game.start.is_teams:
     raise InvalidGameError('teams')
-  # two minutes, hopefully long enough to rule out non-matches
-  if len(game.frames) < 2 * 60 * 60:
+  if len(game.frames) < min_len * 60 * 60:
     raise InvalidGameError('length')
   # people sometimes reset at end of game?
   # if game.end.method == event.End.Method.INCONCLUSIVE:
@@ -137,16 +115,14 @@ def check_valid(game):
       raise InvalidGameError("ice climbers")
 
 
-def get_supervised_data(game):
+def get_supervised_data(game, discretize):
   player_ports = [i for i, player in enumerate(game.start.players) if player is not None]
   assert(len(player_ports) == 2)
   
-  state_action_series = [get_state_actions(player_ports, game.start, f) for f in game.frames]
+  state_action_series = [get_state_actions(player_ports, game.start, f, discretize) for f in game.frames]
   for rollout in zip(*state_action_series):
     yield rollout
 
-
-RepeatedAction = namedtuple('RepeatedAction', 'action repeat')
 
 def compress_repeated_actions(state_actions, max_repeat=15):
   repeated_state_actions = []
@@ -178,7 +154,7 @@ test_file = 'replays/Gang-Steals/15/Game_20190309T113739.slp'
 #test_data = get_supervised_data(test_game)
 
 
-def load_supervised_data(replay_files):
+def load_supervised_data(replay_files, discretize):
   valid_files = 0
   start_time = time.time()
   for i, f in enumerate(replay_files):
@@ -190,7 +166,7 @@ def load_supervised_data(replay_files):
       continue
     try:
       check_valid(game)
-      yield from get_supervised_data(game)
+      yield from get_supervised_data(game, discretize)
       valid_files += 1
     except InvalidGameError as e:
       print(e)
@@ -204,30 +180,39 @@ def load_supervised_data(replay_files):
   print(valid_files, len(replay_files))
 
 
-def create_np_dataset(replay_path):
+def create_np_dataset(replay_path, compress=False, discretize=False):
+  compress = compress and discretize
   stream_files = []
-  for dirpath, _, filenames in os.walk('replays/' + replay_path):
+  for dirpath, _, filenames in os.walk(replay_path):
     for fname in filenames:
       stream_files.append(os.path.join(dirpath, fname))
 
-  rollouts = load_supervised_data(stream_files)
-  compressed_rollouts = map(compress_repeated_actions, rollouts)
-  compressed_rollouts_np = list(map(nt_to_np, compressed_rollouts))
-  compressed_rollouts_np_pkl = pickle.dumps(compressed_rollouts_np)
+  rollouts = load_supervised_data(stream_files[:10], discretize)
+  if compress:
+    rollouts = map(compress_repeated_actions, rollouts)
+  rollouts_np = list(map(nt_to_np, rollouts))
+  rollouts_np_pkl = pickle.dumps(rollouts_np)
   
-  print(len(compressed_rollouts_np_pkl))
+  print(len(rollouts_np_pkl))
   
-  save_path = 'il-data/%s.pkl' % replay_path
+  suffix = ''
+  if compress:
+    suffix = '_compressed'
+  elif discretize:
+    suffix = '_discrete'
+  suffix += '.pkl'
+
+  save_path = replay_path.replace('replays', 'il-data', 1)
+  save_path = save_path.rstrip('/') + suffix
+  print('saving to', save_path)
   save_dir = save_path.rsplit('/', 1)[0]
   os.makedirs(save_dir, exist_ok=True)
   with open(save_path, 'wb') as f:
-    f.write(compressed_rollouts_np_pkl)
+    f.write(rollouts_np_pkl)
 
 
 def compute_stats(path):
-  replay_path = 'Gang-Steals'
-  save_path = 'il-data/%s.pkl' % replay_path
-  with open(save_path, 'rb') as f:
+  with open(path, 'rb') as f:
     compressed_rollouts_np = pickle.load(f)
   
   total_actions = 0
@@ -243,12 +228,14 @@ def compute_stats(path):
 
 if __name__ == '__main__':
   import argparse
-  parser = argparse.argument_parser()
-  parser.add_option('replay_path', type=str, help='root dir containing raw .slp replays')
-  parser.add_option('--stats', action='store_true', help='compute stats instead of making dataset')
+  parser = argparse.ArgumentParser()
+  parser.add_argument('replay_path', type=str, help='root dir containing raw .slp replays')
+  parser.add_argument('--compress', action='store_true', help='compress repeated actions')
+  parser.add_argument('--discrete', action='store_true', help='discretize actions')
+  parser.add_argument('--stats', action='store_true', help='compute stats instead of making dataset')
   args = parser.parse_args()
 
   if args.stats:
-    compute_stats(args.replay_path)
+    compute_stats(args.replay_path, compress=args.compress, discretize=args.discrete)
   else:
     create_np_dataset(args.replay_path)
