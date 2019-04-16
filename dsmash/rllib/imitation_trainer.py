@@ -1,10 +1,12 @@
 import numpy as np
 import tensorflow as tf
+import trfl
 
 import gym
 
 from ray.rllib.evaluation.metrics import LEARNER_STATS_KEY
 from ray.rllib.evaluation.sample_batch import SampleBatch
+from ray.rllib.utils.explained_variance import explained_variance
 from ray.rllib.evaluation.tf_policy_graph import TFPolicyGraph, \
     LearningRateSchedule
 
@@ -89,7 +91,6 @@ class ImitationPolicyGraph(VTracePolicyGraph):
       self.model.outputs
     action_dist = dist_class(dist_inputs)
 
-    values = self.model.value_function()
     self.var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                       tf.get_variable_scope().name)
 
@@ -138,14 +139,28 @@ class ImitationPolicyGraph(VTracePolicyGraph):
     actions_logp = make_time_major(
         action_dist.logp(actions), drop_last=True)
     imitation_loss = -tf.reduce_mean(tf.boolean_mask(actions_logp, valid_mask))
-    self.total_loss = imitation_loss
+    
+    tm_values = make_time_major(self.model.value_function())
+    baseline_values = tm_values[:-1]
+    tm_dones = make_time_major(dones, drop_last=True)
+    td_lambda = trfl.td_lambda(
+        state_values=baseline_values,
+        rewards=make_time_major(rewards)[:-1],
+        pcontinues=tf.to_float(~tm_dones) * config["gamma"],
+        bootstrap_value=tm_values[-1],
+        lambda_=config.get("lambda", 1.))
+
+    # td_lambda.loss has shape [B] after a reduce_sum
+    vf_loss = tf.reduce_mean(td_lambda.loss) / tf.to_float(tf.shape(tm_dones)[0])
+    
+    self.total_loss = imitation_loss + self.config["vf_loss_coeff"] * vf_loss
 
     # Initialize TFPolicyGraph
     loss_in = [
       (SampleBatch.ACTIONS, actions),
       (SampleBatch.DONES, dones),
       # (BEHAVIOUR_LOGITS, behaviour_logits),
-      # (SampleBatch.REWARDS, rewards),
+      (SampleBatch.REWARDS, rewards),
       (SampleBatch.CUR_OBS, observations),
       (SampleBatch.PREV_ACTIONS, prev_actions),
       (SampleBatch.PREV_REWARDS, prev_rewards),
@@ -180,10 +195,10 @@ class ImitationPolicyGraph(VTracePolicyGraph):
         #"entropy": self.loss.entropy,
         "grad_gnorm": tf.global_norm(self._grads),
         "var_gnorm": tf.global_norm(self.var_list),
-        #"vf_loss": self.loss.vf_loss,
-        #"vf_explained_var": explained_variance(
-        #  tf.reshape(self.loss.vtrace_returns.vs, [-1]),
-        #  tf.reshape(make_time_major(values, drop_last=True), [-1])),
+        "vf_loss": vf_loss,
+        "vf_explained_var": explained_variance(
+          tf.reshape(td_lambda.extra.discounted_returns, [-1]),
+          tf.reshape(baseline_values, [-1])),
       },
     }
   
