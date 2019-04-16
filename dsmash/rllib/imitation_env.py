@@ -9,6 +9,7 @@ from ray import rllib
 
 from dsmash import action
 from dsmash.rllib import ssbm_spaces
+from dsmash.env.reward import rewards_np
 
 @functools.lru_cache()
 def get_data(data_path):
@@ -25,6 +26,7 @@ class GameReader:
     self._game = random.choice(self._games)
     self._length = len(self._game.state.stage)
     self._frame = 0
+    self._rewards = rewards_np(self._game.state, get=getattr)
 
   def _get_frame(self, xs):
     return xs[self._frame]
@@ -34,13 +36,14 @@ class GameReader:
       self.reset()
     
     state_action = nest.map_structure(self._get_frame, self._game)
+    reward = self._rewards[self._frame-1] if self._frame > 0 else 0.
 
     self._frame += 1
     done = self._frame == self._length
     if done:
       self._game = None
 
-    return state_action, done
+    return state_action, done, reward
 
 
 class ImitationEnv(rllib.env.BaseEnv):
@@ -50,7 +53,6 @@ class ImitationEnv(rllib.env.BaseEnv):
     self._num_parallel = config["num_parallel"]
     print("NUM_PARALLEL", self._num_parallel)
     self._readers = [GameReader(self._data_path) for _ in range(self._num_parallel)]
-    self._rewards = {i: {0: 0} for i in range(self._num_parallel)} 
     self._flat_obs = config.get("flat_obs", False)
     
     if self._flat_obs:
@@ -70,16 +72,17 @@ class ImitationEnv(rllib.env.BaseEnv):
     pass
 
   def poll(self):
-    state_actions, dones = zip(*[r.poll() for r in self._readers])
+    state_actions, dones, rewards = zip(*[r.poll() for r in self._readers])
     
     obs = {i: {0: self._conv(sa.state)} for i, sa in enumerate(state_actions)}
     dones = {i: {"__all__": done} for i, done in enumerate(dones)}
+    rewards = {i: {0: r} for i, r in enumerate(rewards)}
     infos = {i: {} for i in range(self._num_parallel)}
     off_policy_actions = {
         i: {0: nest.flatten(sa.action)}
         for i, sa in enumerate(state_actions)}
     
-    return obs, self._rewards, dones, infos, off_policy_actions
+    return obs, rewards, dones, infos, off_policy_actions
 
   def try_reset(self, env_id):
     return None

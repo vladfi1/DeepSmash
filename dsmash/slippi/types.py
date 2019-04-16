@@ -6,7 +6,13 @@ import enum
 State = namedtuple('State', 'players stage')
 StateAction = namedtuple('StateAction', 'state action')
 
-Player = namedtuple('Player', 'x y character action_state action_frame damage shield')
+PlayerTuple = namedtuple('PlayerTuple', 'x y character action_state action_frame damage shield')
+
+class Player(PlayerTuple):
+  """For compatibility with phillip's types."""
+  @property
+  def percent(self):
+    return self.damage
 
 simple_buttons = "A B Z Y L DPAD_UP".split()
 SimpleButtons = namedtuple("SimpleButtons", simple_buttons)

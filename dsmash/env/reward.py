@@ -29,15 +29,18 @@ def computeRewardsSA(state_actions, **kwargs):
   states = [sa.state for sa in state_actions]
   return computeRewards(states, **kwargs)
 
-def deaths_np(player):
-  deaths = player['action_state'] <= 0xA
+
+getitem = lambda obj, key: obj[key]
+
+def deaths_np(player, get=getitem):
+  deaths = get(player, 'action_state') <= 0xA
   return np.logical_and(np.logical_not(deaths[:-1]), deaths[1:])
 
-def damages_np(player):
-  percents = player['percent']
+def damages_np(player, get=getitem):
+  percents = get(player, 'percent')
   return np.maximum(percents[1:] - percents[:-1], 0)
 
-def rewards_np(states, enemies=[0], allies=[1], damage_ratio=0.01):
+def rewards_np(states, enemies=[0], allies=[1], damage_ratio=0.01, get=getitem):
   """Computes rewards from a list of state transitions.
   
   Args:
@@ -49,11 +52,11 @@ def rewards_np(states, enemies=[0], allies=[1], damage_ratio=0.01):
     A length T numpy array with the rewards on each transition.
   """
   
-  players = states['players']
+  players = get(states, 'players')
   pids = enemies + allies
 
-  deaths = {p : deaths_np(players[p]) for p in pids}
-  damages = {p : damages_np(players[p]) for p in pids}
+  deaths = {p : deaths_np(players[p], get) for p in pids}
+  damages = {p : damages_np(players[p], get) for p in pids}
   losses = {p : deaths[p] + damage_ratio * damages[p] for p in pids}
   
   return sum(losses[p] for p in enemies) - sum(losses[p] for p in allies)
