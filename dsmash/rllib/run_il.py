@@ -3,7 +3,7 @@ import ray
 from ray import tune
 from ray.rllib import agents
 
-from dsmash.rllib import imitation_env
+from dsmash.rllib import imitation_env, imitation_trainer
 #from dsmash.rllib import model
 
 #model.register()
@@ -42,7 +42,8 @@ exp_name = "imitation"
 tune.run_experiments({
   exp_name: {
     "env": imitation_env.ImitationEnv,
-    "run": agents.impala.ImpalaTrainer,
+    #"run": agents.impala.ImpalaTrainer,
+    "run": imitation_trainer.ImitationTrainer,
     #"run": agents.a3c.A3CAgent,
     #"run": agents.a3c.A2CAgent,
     "checkpoint_freq": 100,
