@@ -205,7 +205,7 @@ hitstun_frames_left_conv = partial(SumConv, [
 
 action_frame_conv = partial(SumConv, [
     ('default', frame_conv),
-    ('exception', partial(ExceptionConv, [-1])),
+    ('exception', partial(ExceptionConv, [-1, -2])),
 ])
 
 shield_conv = partial(positive_conv, 60)
