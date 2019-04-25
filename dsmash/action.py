@@ -11,7 +11,11 @@ import sonnet as snt
 from dsmash.slippi.types import *
 
 
-class DiscreteFloat:
+class Convertor:
+  def to_raw(self, x):
+    return x
+
+class DiscreteFloat(Convertor):
   """Discretizes continuous scalars."""
   def __init__(self, values):
     self._values = np.array(values, dtype=np.float32)
@@ -24,7 +28,7 @@ class DiscreteFloat:
   def to_discrete(self, x):
     return np.searchsorted(self._cutoffs, x)
 
-  def to_float(self, i):
+  def to_raw(self, i):
     return self._values[i]
 
   def embed(self, i):
@@ -36,10 +40,14 @@ class DiscreteFloat:
   def space(self):
     return spaces.Discrete(self.size)
 
-class Discrete:
+class Discrete(Convertor):
   
   def __init__(self, size):
     self.size = size
+
+  def to_raw(self, i):
+    assert 0 <= i and i < self.size
+    return i
 
   def embed(self, i):
     return tf.one_hot(i, self.size)
@@ -50,10 +58,14 @@ class Discrete:
   def space(self):
     return spaces.Discrete(self.size)
 
-class Binary:
+class Binary(Convertor):
 
   def embed(self, b):
     return tf.to_float(b)
+
+  def to_raw(self, i):
+    assert i in [0, 1]
+    return bool(i)
 
   def build_dist(self):
     return Bernoulli()
@@ -78,8 +90,11 @@ simple_controller_config = SimpleController(
 
 repeated_simple_controller_config = RepeatedAction(
   action = simple_controller_config,
-  repeat = Discrete(16)  # repeat is 1-indexed, so we increase dimension
+  repeat = Discrete(15)
 )
+
+def to_raw(config, value):
+  return nest.map_structure(lambda conv, x: conv.to_raw(x), config, value)
 
 
 def to_multidiscrete(config):
