@@ -50,7 +50,7 @@ class ImitationEnv(rllib.env.BaseEnv):
   def __init__(self, config):
     self._config = config
     self._data_path = config["data_path"]
-    self._num_parallel = config["num_parallel"]
+    self._num_parallel = config.get("num_parallel", 1)
     print("NUM_PARALLEL", self._num_parallel)
     self._readers = [GameReader(self._data_path) for _ in range(self._num_parallel)]
     self._flat_obs = config.get("flat_obs", False)
