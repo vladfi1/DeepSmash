@@ -179,17 +179,34 @@ class AutoRegressive(Dist):
     super(AutoRegressive, self).__init__(name=name)
     self._dist_struct = dist_struct
     self._dist_flat = nest.flatten(dist_struct)
+    self._residual = residual
+    self._residual_layers = None
+    self._residual_size = None
+
+  def _get_residual_layers(self, size):
+    if not self._residual_layers:
+      with self._enter_variable_scope():
+        self._residual_layers = [snt.Linear(size) for _ in self._dist_flat]
+      self._residual_size = size
+    assert self._residual_size == size
+    return self._residual_layers
+
+  def _get_residual(self, i, size):
+    return self._get_residual_layers(size)[i]
 
   def sample(self, inputs):
     samples = []
     logps = []
-    
-    for dist in self._dist_flat:
+
+    for i, dist in enumerate(self._dist_flat):
       sample, logp = dist.sample(inputs)
       samples.append(sample)
       logps.append(logp)
       sample_repr = dist.embed(sample)
-      inputs = tf.concat([inputs, sample_repr], -1)
+      if self._residual:
+        inputs += self._get_residual(i, inputs.shape[-1])(sample_repr)
+      else:
+        inputs = tf.concat([inputs, sample_repr], -1)
 
     sample_struct = nest.pack_sequence_as(self._dist_struct, samples)
     logp = tf.add_n(logps)
@@ -198,11 +215,15 @@ class AutoRegressive(Dist):
   def logp(self, inputs, sample_struct):
     logps = []
     
-    for sample, dist in zip(nest.flatten(sample_struct), self._dist_flat):
+    for i, (sample, dist) in enumerate(zip(
+        nest.flatten(sample_struct), self._dist_flat)):
       logp = dist.logp(inputs, sample)
       logps.append(logp)
       sample_repr = dist.embed(sample)
-      inputs = tf.concat([inputs, sample_repr], -1)
+      if self._residual:
+        inputs += self._get_residual(i, inputs.shape[-1])(sample_repr)
+      else:
+        inputs = tf.concat([inputs, sample_repr], -1)
     
     return tf.add_n(logps)
 

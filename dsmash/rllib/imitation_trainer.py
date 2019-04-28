@@ -124,7 +124,8 @@ class ImitationPolicyGraph(VTracePolicyGraph):
       action_dist = ssbm_actions.AutoRegressive(
           nest.map_structure(
               lambda conv: conv.build_dist(),
-              ssbm_actions.flat_repeated_config))
+              ssbm_actions.flat_repeated_config),
+          residual=config.get("residual"))
       actions_logp = snt.BatchApply(action_dist.logp)(
           self.model.outputs, actions)
       action_sampler, sampled_logp = snt.BatchApply(
@@ -226,6 +227,7 @@ class ImitationPolicyGraph(VTracePolicyGraph):
 DEFAULT_CONFIG = trainer.with_base_config(impala.DEFAULT_CONFIG, {
   "data_path": None,
   "autoregressive": False,
+  "residual": False,
 })
 
 class ImitationTrainer(impala.ImpalaTrainer):

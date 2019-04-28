@@ -47,6 +47,7 @@ config = {
   "num_workers": 0,
   # "remote_worker_envs": True,
   "autoregressive": True,
+  "residual": True,
   "model": {
     "is_time_major": True,
     #"max_seq_len": unroll_length,
