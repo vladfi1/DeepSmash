@@ -12,7 +12,7 @@ with open(args.path, 'rb') as f:
 
 for game in data:
   game.action.repeat[:] -= 1
-  assert game.action.repeat.min() == 0
+  #assert game.action.repeat.min() == 0
 
 with open(args.path, 'wb') as f:
   pickle.dump(data, f)
