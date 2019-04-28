@@ -32,13 +32,16 @@ class DiscreteFloat(Convertor):
     return self._values[i]
 
   def embed(self, i):
-    return tf.gather(self._values, i)
+    return tf.expand_dims(tf.gather(self._values, i), -1)
   
   def build_dist(self):
     return Categorical(self.size)
   
   def space(self):
     return spaces.Discrete(self.size)
+  
+  def make_ph(self, batch_shape):
+    return tf.placeholder(tf.int64, batch_shape)
 
 class Discrete(Convertor):
   
@@ -58,10 +61,13 @@ class Discrete(Convertor):
   def space(self):
     return spaces.Discrete(self.size)
 
+  def make_ph(self, batch_shape):
+    return tf.placeholder(tf.int64, batch_shape)
+
 class Binary(Convertor):
 
   def embed(self, b):
-    return tf.to_float(b)
+    return tf.expand_dims(tf.to_float(b), -1)
 
   def to_raw(self, i):
     assert i in [0, 1]
@@ -72,6 +78,9 @@ class Binary(Convertor):
 
   def space(self):
     return spaces.Discrete(2)
+
+  def make_ph(self, batch_shape):
+    return tf.placeholder(tf.bool, batch_shape)
 
 BINARY = Binary()
 
@@ -96,10 +105,14 @@ repeated_simple_controller_config = RepeatedAction(
 def to_raw(config, value):
   return nest.map_structure(lambda conv, x: conv.to_raw(x), config, value)
 
-
 def to_multidiscrete(config):
   return spaces.MultiDiscrete([c.space().n for c in nest.flatten(config)])
-  
+
+repeated_simple_controller_space = to_multidiscrete(
+    repeated_simple_controller_config)
+
+def make_ph(config, batch_shape):
+  return nest.map_structure(lambda conv: conv.make_ph(batch_shape), config)
 
 class Bernoulli(snt.AbstractModule):
   def __init__(self, name='Bernoulli'):
