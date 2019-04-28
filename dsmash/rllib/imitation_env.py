@@ -30,10 +30,16 @@ def get_data(data_path):
   with open(data_path, 'rb') as f:
     return pickle.load(f)
 
-
 class GameReader:
-  def __init__(self, data_path):
-    self._games = get_data(data_path)
+  def __init__(self, data_paths):
+    data = []
+    for path in data_paths:
+      data.extend(get_data(path))
+    total_actions = sum(len(game.state.stage) for game in data)
+    total_frames = sum((game.action.repeat + 1).sum() for game in data)
+    print("Loaded %d games, %d actions, %d frames" %
+        (len(data), total_actions, total_frames))
+    self._games = data
     self._game = None
 
   def reset(self):

@@ -9,7 +9,7 @@ from dsmash.rllib import imitation_env, imitation_trainer
 #model.register()
 
 parser = argparse.ArgumentParser()
-parser.add_argument('data_path', type=str, help='path to pickled slippi data')
+parser.add_argument('data_path', type=str, nargs='+', help='path(s) to pickled slippi data')
 parser.add_argument('--num_workers', type=int)
 parser.add_argument('--num_envs_per_worker', type=int)
 parser.add_argument('--cluster', action='store_true')
