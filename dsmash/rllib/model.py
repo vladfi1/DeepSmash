@@ -85,9 +85,13 @@ class HumanActionModel(rllib.models.Model, snt.AbstractModule):
     inputs = tf.concat([obs_embed, prev_actions_embed, prev_rewards_embed], -1)
     trunk_outputs = snt.BatchApply(trunk)(inputs)
     
-    # trivial RNN
-    core_outputs = trunk_outputs
-    self.state_out = self.state_in
+    gru = snt.GRU(cell_size)
+    core_outputs, state_out = tf.nn.dynamic_rnn(
+        gru,
+        trunk_outputs,
+        initial_state=self.state_in[0],
+        time_major=True)
+    self.state_out = (state_out,)
 
     self.last_layer = snt.MergeDims(0, 2)(core_outputs)
     
