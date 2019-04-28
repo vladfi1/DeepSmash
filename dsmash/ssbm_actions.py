@@ -175,7 +175,7 @@ class Categorical(Dist):
 
 class AutoRegressive(Dist):
 
-  def __init__(self, dist_struct, name='AutoRegressive'):
+  def __init__(self, dist_struct, residual=False, name='AutoRegressive'):
     super(AutoRegressive, self).__init__(name=name)
     self._dist_struct = dist_struct
     self._dist_flat = nest.flatten(dist_struct)
