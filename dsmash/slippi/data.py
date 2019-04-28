@@ -9,7 +9,7 @@ import ubjson
 import slippi
 from slippi import Game, event
 
-from dsmash.action import discrete_trigger, discrete_stick
+from dsmash.ssbm_action import discrete_trigger, discrete_stick
 from dsmash.slippi.types import *
 
 Buttons = event.Buttons

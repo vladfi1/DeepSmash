@@ -7,9 +7,23 @@ from tensorflow.python.util import nest
 import gym
 from ray import rllib
 
-from dsmash import action
+from dsmash import ssbm_actions
 from dsmash.rllib import ssbm_spaces
 from dsmash.env.reward import rewards_np
+
+
+def nt_to_dict(obj):
+  if hasattr(obj, '_fields'):
+    d = {}
+    for k in obj._fields:
+      d[k] = nt_to_dict(getattr(obj, k))
+    return d
+  if isinstance(obj, dict):
+    return {k: nt_to_dict(v) for k, v in obj.items()}
+  if isinstance(obj, (tuple, list)):
+    return type(obj)(map(nt_to_dict, obj))
+  return obj
+
 
 @functools.lru_cache()
 def get_data(data_path):
@@ -26,7 +40,27 @@ class GameReader:
     self._game = random.choice(self._games)
     self._length = len(self._game.state.stage)
     self._frame = 0
+
     self._rewards = rewards_np(self._game.state, get=getattr)
+    self._prev_rewards = np.concatenate(([0], self._rewards))
+
+    self._dones = np.zeros((self._length,), dtype=bool)
+    self._dones[-1] = True
+
+    # for multidiscrete action space
+    # self._flat_actions = np.stack(nest.flatten(self._game.action), 1)
+
+    self._prev_actions = nest.map_structure(
+        lambda xs: np.concatenate(([0], xs[:-1])),
+        self._game.action)
+
+    self._sample_batch = dict(
+      obs=nt_to_dict(self._game.state),
+      actions=nest.flatten(self._game.action),
+      rewards=np.concatenate((self._rewards, [0])),
+      dones=self._dones,
+      prev_actions=nest.flatten(self._prev_actions),
+      prev_rewards=self._prev_rewards)
 
   def _get_frame(self, xs):
     return xs[self._frame]
@@ -36,7 +70,7 @@ class GameReader:
       self.reset()
     
     state_action = nest.map_structure(self._get_frame, self._game)
-    reward = self._rewards[self._frame-1] if self._frame > 0 else 0.
+    reward = self._prev_rewards[self._frame]
 
     self._frame += 1
     done = self._frame == self._length
@@ -44,6 +78,34 @@ class GameReader:
       self._game = None
 
     return state_action, done, reward
+
+  def _get_sample_batch(self, length):
+    start_frame = self._frame
+    end_frame = start_frame + length
+    chop = lambda xs: xs[start_frame:end_frame]
+    sample_batch = nest.map_structure(chop, self._sample_batch)
+    if end_frame == self._length:
+      self.reset()
+    else:
+      self._frame = end_frame
+    return sample_batch
+  
+  def get_sample_batch(self, size):
+    if not self._game:
+      self.reset()
+
+    available = self._length - self._frame
+    
+    if available < size:
+      sample1 = self._get_sample_batch(available)
+      sample2 = self._get_sample_batch(size - available)
+      sample_batch = nest.map_structure(
+          lambda *xs: np.concatenate(xs),
+          sample1, sample2)
+    else:
+      sample_batch = self._get_sample_batch(size)
+    
+    return sample_batch
 
 
 class ImitationEnv(rllib.env.BaseEnv):
@@ -65,8 +127,8 @@ class ImitationEnv(rllib.env.BaseEnv):
       self.observation_space = ssbm_spaces.slippi_game_conv.space
       self._conv = ssbm_spaces.slippi_game_conv
 
-    self.action_space = action.to_multidiscrete(
-        action.repeated_simple_controller_config)
+    self.action_space = ssbm_actions.to_multidiscrete(
+        ssbm_actions.repeated_simple_controller_config)
 
   def send_actions(self, actions):
     pass

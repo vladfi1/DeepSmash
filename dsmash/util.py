@@ -45,7 +45,9 @@ def scanr1(f, l):
   return scanr(f, l[-1], l[:-1])
 
 def zipWith(f, *sequences):
-  return [f(*args) for args in zip(*sequences)]
+  if not sequences:
+    return []
+  return type(sequences[0])(f(*args) for args in zip(*sequences))
 
 def compose(*fs):
   "compose(f1, f2, ..., fn)(x) = f1(f2( ... fn(x)))"
@@ -65,12 +67,10 @@ def deepMap(f, obj):
 def deepValues(obj):
   if isinstance(obj, dict):
     for v in obj.values():
-      for x in deepValues(v):
-        yield x
+      yield from deepValues(v)
   elif isinstance(obj, list):
     for v in obj:
-      for x in deepValues(v):
-        yield x
+      yield from deepValues(v)
   else: # note that tuples are values, not lists
     yield obj
 
