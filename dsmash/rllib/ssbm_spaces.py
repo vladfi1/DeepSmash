@@ -1,32 +1,12 @@
-import copy
-import math
+from collections import OrderedDict
 from functools import partial
+import copy
 from logging import warning
+import math
+
 import numpy as np
+import tensorflow as tf
 from gym import spaces
-
-buttons = ['A', 'B', 'Y', 'L', 'Z']
-
-button_space = spaces.Discrete(len(buttons) + 1)
-main_stick_space = spaces.Box(0, 1, [2]) # X and Y axes
-
-c_directions = [(0.5, 0.5), (0.5, 1), (0.5, 0), (0, 0.5), (1, 0.5)]
-c_stick_space = spaces.Discrete(len(c_directions))
-
-controller_space = spaces.Tuple((button_space, main_stick_space, c_stick_space))
-
-def realController(control):
-  button, main, c = control
-  
-  controller = ssbm.RealControllerState()
-
-  if button < len(buttons):
-    setattr(controller, 'button_' + buttons[button], True)
-  
-  controller.stick_MAIN = tuple(main)
-  controller.stick_C = c_directions[c]
-  
-  return controller
 
 class Conv:
   def contains(self, x):
@@ -50,6 +30,12 @@ class BoolConv(Conv):
   
   def write(self, b, array, offset):
     array[offset + int(b)] = 1
+  
+  def embed(self, x):
+    return tf.one_hot(x, 2)
+  
+  def make_ph(self, batch_shape):
+    return tf.placeholder(tf.bool, batch_shape, self.name)
 
 def clip(x, min_x, max_x):
   return min(max(x, min_x), max_x)
@@ -86,6 +72,18 @@ class RealConv(Conv):
 
   def write(self, x, array, offset):
     array[offset] = self._process(x)
+  
+  def embed(self, x):
+    guard_nan = tf.where(
+        tf.is_nan(x),
+        tf.fill(tf.shape(x), tf.constant(self.default_value, dtype=x.dtype)),
+        x)
+    clipped = tf.clip_by_value(guard_nan, self.space.low, self.space.high)
+    transformed = self.transform(clipped)
+    return tf.expand_dims(transformed, -1)
+
+  def make_ph(self, batch_shape):
+    return tf.placeholder(tf.float32, batch_shape, self.name)
 
 def positive_conv(size, *args, **kwargs):
   return RealConv((0, size), (0, 1), *args, **kwargs)
@@ -153,23 +151,45 @@ class DiscreteConv(Conv):
       warning("%d out of bounds in discrete space \"%s\"" % (x, self.name))
       x = self.size
     return x
-    
+
   def write(self, x, array, offset):
     array[offset + self(x)] = 1
+  
+  def embed(self, x):
+    return tf.one_hot(x, self.flat_size)
+
+  def make_ph(self, batch_shape):
+    return tf.placeholder(tf.int64, batch_shape, self.name)
 
 class StructConv(Conv):
   def __init__(self, spec, name="StructConv"):
+    self.name = name
     self.spec = [(key, f(name=name + '/' + key)) for key, f in spec]
-    self.space = spaces.Tuple([conv.space for _, conv in self.spec])
+    self.space = spaces.Dict(OrderedDict(
+        (name, conv.space) for name, conv in self.spec))
     self.flat_size = sum(conv.flat_size for _, conv in self.spec)
   
   def __call__(self, struct):
-    return [conv(getattr(struct, name)) for name, conv in self.spec]
-    
+    return {name: conv(getattr(struct, name)) for name, conv in self.spec}
+
   def write(self, struct, array, offset):
     for name, conv in self.spec:
       conv.write(getattr(struct, name), array, offset)
       offset += conv.flat_size
+
+  def embed(self, struct):
+    if isinstance(struct, dict):
+      return tf.concat([
+          conv.embed(struct[name])
+          for name, conv in self.spec], -1)
+    if hasattr(struct, '_fields'):
+      return tf.concat([
+          conv.embed(getattr(struct, name))
+          for name, conv in self.spec], -1)
+    raise TypeError("Unknown struct %s" % struct)
+
+  def make_ph(self, batch_shape):
+    return {name: conv.make_ph(batch_shape) for name, conv in self.spec}
 
 class ArrayConv:
   def __init__(self, mk_conv, permutation, name="ArrayConv"):
@@ -184,6 +204,17 @@ class ArrayConv:
     for i, conv in self.permutation:
       conv.write(raw_array[i], array, offset)
       offset += conv.flat_size
+
+  def embed(self, array):
+    return tf.concat([
+        conv.embed(array[i])
+        for i, conv in self.permutation], -1)
+
+  def make_ph(self, batch_shape):
+    phs = [None] * len(self.permutation)
+    for i, conv in self.permutation:
+      phs[i] = conv.make_ph(batch_shape)
+    return tuple(phs)
 
 max_char_id = 32 # should be large enough?
 
@@ -265,10 +296,10 @@ CONVS['phillip'] = get_phillip_conv
 # reduced specs for slippi data
 slippi_player_spec = [
   ('x', xy_conv),
-  ('x', xy_conv),
+  ('y', xy_conv),
   ('character', character_conv),
   ('action_state', action_state_conv),
-  ('action_frame', action_frame_conv),
+  # ('action_frame', action_frame_conv),
   ('damage', damage_conv),
   ('shield', shield_conv),
 ]
