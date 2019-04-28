@@ -126,14 +126,15 @@ def get_supervised_data(game, discretize):
 
 
 def compress_repeated_actions(state_actions, max_repeat=15):
+  max_repeat -= 1
   repeated_state_actions = []
   last_state, last_action = state_actions[0]
-  repeat = 1
+  repeat = 0
   
   def commit():
     repeated_state_actions.append(
       StateAction(last_state, RepeatedAction(last_action, repeat)))
-          
+
   for state, action in state_actions[1:]:
     if repeat == max_repeat or action != last_action:
       commit()

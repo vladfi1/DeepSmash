@@ -10,15 +10,15 @@ def isDying(player):
 def processDeaths(deaths):
   return np.array(util.zipWith(lambda prev, next: float((not prev) and next), deaths, deaths[1:]))
 
-def processDamages(percents):
-  return np.array(util.zipWith(lambda prev, next: max(next-prev, 0), percents, percents[1:]))
+def processDamages(damages):
+  return np.array(util.zipWith(lambda prev, next: max(next-prev, 0), damages, damages[1:]))
 
 # from player 2's perspective
 def computeRewards(states, enemies=[0], allies=[1], damage_ratio=0.01):
   pids = enemies + allies
 
   deaths = {p : processDeaths([isDying(s.players[p]) for s in states]) for p in pids}
-  damages = {p : processDamages([s.players[p].percent for s in states]) for p in pids}
+  damages = {p : processDamages([s.players[p].damage for s in states]) for p in pids}
 
   losses = {p : deaths[p] + damage_ratio * damages[p] for p in pids}
 
@@ -37,8 +37,8 @@ def deaths_np(player, get=getitem):
   return np.logical_and(np.logical_not(deaths[:-1]), deaths[1:])
 
 def damages_np(player, get=getitem):
-  percents = get(player, 'percent')
-  return np.maximum(percents[1:] - percents[:-1], 0)
+  damages = get(player, 'damage')
+  return np.maximum(damages[1:] - damages[:-1], 0)
 
 def rewards_np(states, enemies=[0], allies=[1], damage_ratio=0.01, get=getitem):
   """Computes rewards from a list of state transitions.

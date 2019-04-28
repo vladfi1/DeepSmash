@@ -205,7 +205,7 @@ hitstun_frames_left_conv = partial(SumConv, [
 
 action_frame_conv = partial(SumConv, [
     ('default', frame_conv),
-    ('exception', partial(ExceptionConv, [-1])),
+    ('exception', partial(ExceptionConv, [-1, -2])),
 ])
 
 shield_conv = partial(positive_conv, 60)
@@ -255,6 +255,13 @@ game_conv_list = [
   StructConv(make_game_spec(swap=True), name='game-1'),
 ]
 
+CONVS = {}
+
+def get_phillip_conv(pid):
+  return game_conv_list[pid]
+
+CONVS['phillip'] = get_phillip_conv
+
 # reduced specs for slippi data
 slippi_player_spec = [
   ('x', xy_conv),
@@ -274,4 +281,10 @@ slippi_game_spec = [
 ]
 
 slippi_game_conv = StructConv(slippi_game_spec, name='slippi')
+
+def get_slippi_conv(pid):
+  assert pid == 0
+  return slippi_game_conv
+
+CONVS['slippi'] = get_slippi_conv
 

@@ -1,7 +1,8 @@
 import enum
 import os
 from threading import Thread
-from dsmash import util
+from dsmash import util, ssbm
+from dsmash.slippi import types as slp
 
 @enum.unique
 class Button(enum.Enum):
@@ -18,6 +19,11 @@ class Button(enum.Enum):
   D_LEFT = 10
   D_RIGHT = 11
 
+def slp_to_dol_btn(button):
+  return button.replace('DPAD', 'D')
+
+slippi_buttons = list(map(slp_to_dol_btn, slp.simple_buttons))
+
 @enum.unique
 class Trigger(enum.Enum):
   L = 0
@@ -27,6 +33,24 @@ class Trigger(enum.Enum):
 class Stick(enum.Enum):
   MAIN = 0
   C = 1
+
+def slp_to_dol_xy(x):
+  return 0.5 * (x + 1)
+
+SLP_TO_DOL_C = [
+    (0.5, 0.5),  # NONE
+    (1, 0.5), # RIGHT
+    (0, 0.5), # LEFT
+    (0.5, 0), # DOWN
+    (0.5, 1), # UP
+]
+
+def name_to_enum_map(enum_class):
+  return {x.name: x for x in enum_class}
+
+# only using button
+NAME_TO_BUTTON, NAME_TO_TRIGGER, NAME_TO_STICK = map(
+    name_to_enum_map, [Button, Trigger, Stick])
 
 class Pad:
   """Writes out controller inputs."""
@@ -107,6 +131,15 @@ class Pad:
     self.write('SET {} {:.2f} {:.2f}'.format(stick.name, x, y), buffering)
 
   def send_controller(self, controller):
+    if isinstance(controller, ssbm.RealControllerState):
+      self.send_real_controller(controller)
+    elif isinstance(controller, slp.SimpleController):
+      self.send_simple_controller(controller)
+    else:
+      raise TypeError('Unknown controller type %s' % type(controller))
+
+  def send_real_controller(self, controller):
+    """Sends a dsmash.ssbm.RealControllerState."""
     for button in Button:
       field = 'button_' + button.name
       if hasattr(controller, field):
@@ -125,3 +158,25 @@ class Pad:
       self.tilt_stick(stick, value.x, value.y, True)
     
     self.flush()
+  
+  def send_simple_controller(self, controller):
+    """Sends a dsmash.slippi.types.SimpleController."""
+    for name, value in zip(slippi_buttons, controller.buttons):
+      button = NAME_TO_BUTTON[name]  # TODO: shortcut this
+      if value:
+        self.press_button(button, True)
+      else:
+        self.release_button(button, True)
+
+    self.tilt_stick(
+        Stick.MAIN,
+        slp_to_dol_xy(controller.joystick.x),
+        slp_to_dol_xy(controller.joystick.y),
+        True)
+    
+    c_x, c_y = SLP_TO_DOL_C[controller.cstick]
+    self.tilt_stick(Stick.C, c_x, c_y, True)
+    
+    self.press_trigger(Trigger.L, controller.trigger, True)
+    self.flush()
+

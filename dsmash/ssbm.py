@@ -75,7 +75,7 @@ RealControllerState.neutral = RealControllerState()
 @pretty_struct
 class PlayerMemory(Structure):
   _fields = [
-    ('percent', c_uint),
+    ('damage', c_uint),
     ('stock', c_uint),
     # 1.0 is right, -1.0 is left
     ('facing', c_float),
@@ -97,7 +97,7 @@ class PlayerMemory(Structure):
     ('speed_y_self', c_float),
     ('speed_x_attack', c_float),
     ('speed_y_attack', c_float),
-    ('shield_size', c_float),
+    ('shield', c_float),
 
     ('cursor_x', c_float),
     ('cursor_y', c_float),

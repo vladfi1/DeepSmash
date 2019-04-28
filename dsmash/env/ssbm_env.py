@@ -40,7 +40,7 @@ class SSBMEnv(Default):
     Option('debug', type=int, default=0),
   ] + [
     Option('p%d' % i, type=int, choices=str_to_player.keys(), default='ai',
-        help="Player type in port %d.") for i in [1, 2]
+        help="Player type in port %d." % i) for i in [1, 2]
   ] + [
     Option('char%d' % i, type=str, choices=mm.characters.keys(), default="falcon",
         help="character for player %d" % i) for i in [1, 2]
@@ -221,7 +221,6 @@ class SSBMEnv(Default):
   
   def step(self, controllers):
     # TODO: if not in game, wait
-    
     for pid, pad in zip(self.pids, self.pads):
       if pid not in controllers:
         assert(self.players[pid] == Player.CPU)
