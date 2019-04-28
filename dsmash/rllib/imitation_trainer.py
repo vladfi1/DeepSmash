@@ -85,8 +85,8 @@ class ImitationPolicyGraph(VTracePolicyGraph):
         "Action space {} is not supported for IMPALA.".format(
           action_space))
 
-    action_config = nest.flatten(ssbm_actions.repeated_simple_controller_config)
-    make_action_ph = lambda: ssbm_actions.make_ph(action_config, batch_shape)
+    make_action_ph = lambda: ssbm_actions.make_ph(
+        ssbm_actions.flat_repeated_config, batch_shape)
 
     # Create input placeholders
     actions = make_action_ph()
@@ -97,8 +97,13 @@ class ImitationPolicyGraph(VTracePolicyGraph):
     existing_seq_lens = None
 
     # Setup the policy
-    dist_class, logit_dim = ModelCatalog.get_action_dist(
-      action_space, self.config["model"])
+    autoregressive = config.get("autoregressive")
+    if autoregressive:
+      logit_dim = 128  # not really logits
+    else:
+      dist_class, logit_dim = ModelCatalog.get_action_dist(
+        action_space, self.config["model"])
+
     prev_actions = make_action_ph()
     prev_rewards = tf.placeholder(tf.float32, batch_shape, name="prev_reward")
     self.model = HumanActionModel(
@@ -115,19 +120,28 @@ class ImitationPolicyGraph(VTracePolicyGraph):
       state_in=existing_state_in,
       seq_lens=existing_seq_lens)
 
-    if is_multidiscrete:
-      dist_inputs = tf.split(self.model.outputs, output_hidden_shape, axis=-1)
+    if autoregressive:
+      action_dist = ssbm_actions.AutoRegressive(
+          nest.map_structure(
+              lambda conv: conv.build_dist(),
+              ssbm_actions.flat_repeated_config))
+      actions_logp = snt.BatchApply(action_dist.logp)(
+          self.model.outputs, actions)
+      action_sampler, sampled_logp = snt.BatchApply(
+          action_dist.sample)(self.model.outputs)
+      sampled_prob = tf.exp(sampled_logp)
     else:
-      dist_inputs = self.model.outputs
-
-    action_dist = dist_class(snt.MergeDims(0, 2)(dist_inputs))
+      dist_inputs = tf.split(self.model.outputs, output_hidden_shape, axis=-1)
+      action_dist = dist_class(snt.MergeDims(0, 2)(dist_inputs))
+      int64_actions = [tf.cast(x, tf.int64) for x in actions]
+      actions_logp = action_dist.logp(snt.MergeDims(0, 2)(int64_actions))
+      action_sampler = action_dist.sample()
+      sampled_prob = action_dist.sampled_action_prob(),
 
     self.var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                       tf.get_variable_scope().name)
 
     # actual loss computation
-    int64_actions = [tf.cast(x, tf.int64) for x in actions]
-    actions_logp = action_dist.logp(snt.MergeDims(0, 2)(int64_actions))
     imitation_loss = -tf.reduce_mean(actions_logp)
     
     tm_values = self.model.values
@@ -168,8 +182,8 @@ class ImitationPolicyGraph(VTracePolicyGraph):
       action_space,
       self.sess,
       obs_input=observations,
-      action_sampler=action_dist.sample(),
-      action_prob=action_dist.sampled_action_prob(),
+      action_sampler=action_sampler,
+      action_prob=sampled_prob,
       loss=self.total_loss,
       model=self.model,
       loss_inputs=loss_in,
@@ -211,6 +225,7 @@ class ImitationPolicyGraph(VTracePolicyGraph):
 
 DEFAULT_CONFIG = trainer.with_base_config(impala.DEFAULT_CONFIG, {
   "data_path": None,
+  "autoregressive": False,
 })
 
 class ImitationTrainer(impala.ImpalaTrainer):

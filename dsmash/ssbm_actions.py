@@ -102,6 +102,8 @@ repeated_simple_controller_config = RepeatedAction(
   repeat = Discrete(15)
 )
 
+flat_repeated_config = nest.flatten(repeated_simple_controller_config)
+
 def to_raw(config, value):
   return nest.map_structure(lambda conv, x: conv.to_raw(x), config, value)
 
@@ -114,7 +116,14 @@ repeated_simple_controller_space = to_multidiscrete(
 def make_ph(config, batch_shape):
   return nest.map_structure(lambda conv: conv.make_ph(batch_shape), config)
 
-class Bernoulli(snt.AbstractModule):
+
+class Dist(snt.AbstractModule):
+
+  def _build(self, inputs):
+    return self.sample(inputs)
+
+
+class Bernoulli(Dist):
   def __init__(self, name='Bernoulli'):
     super(Bernoulli, self).__init__(name=name)
     
@@ -138,10 +147,10 @@ class Bernoulli(snt.AbstractModule):
         logits=logits)  
 
   def embed(self, sample):
-    return tf.to_float(sample)
-  
+    return tf.expand_dims(tf.to_float(sample), -1)
 
-class Categorical(snt.AbstractModule):
+
+class Categorical(Dist):
   def __init__(self, size, name='Categorical'):
     super(Categorical, self).__init__(name=name)
     self._size = size
@@ -164,7 +173,7 @@ class Categorical(snt.AbstractModule):
   def embed(self, x):
     return tf.one_hot(x, self._size)
 
-class AutoRegressive(snt.AbstractModule):
+class AutoRegressive(Dist):
 
   def __init__(self, dist_struct, name='AutoRegressive'):
     super(AutoRegressive, self).__init__(name=name)
@@ -190,7 +199,7 @@ class AutoRegressive(snt.AbstractModule):
     logps = []
     
     for sample, dist in zip(nest.flatten(sample_struct), self._dist_flat):
-      logp = dist.logp(inputs)
+      logp = dist.logp(inputs, sample)
       logps.append(logp)
       sample_repr = dist.embed(sample)
       inputs = tf.concat([inputs, sample_repr], -1)
