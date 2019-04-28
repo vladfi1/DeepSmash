@@ -58,15 +58,17 @@ class HumanActionModel(rllib.models.Model, snt.AbstractModule):
     return self(input_dict, num_outputs, options)[:2]
 
   def _build(self, input_dict, num_outputs, options):
-    cell_size = options.get("lstm_cell_size")
-    self.state_init = (
-        np.zeros([cell_size], np.float32),
-    )
-
-    if not self.state_in:
+    if options.get("use_lstm"):
+      cell_size = options.get("lstm_cell_size")
+      self.state_init = (
+          np.zeros([cell_size], np.float32),
+      )
       self.state_in = (
           tf.placeholder(tf.float32, [None, cell_size], name="state_in"),
       )
+    else:
+      self.state_init = ()
+      self.state_in = ()
 
     obs_embed = ssbm_spaces.slippi_game_conv.embed(input_dict["obs"])
     
@@ -85,13 +87,17 @@ class HumanActionModel(rllib.models.Model, snt.AbstractModule):
     inputs = tf.concat([obs_embed, prev_actions_embed, prev_rewards_embed], -1)
     trunk_outputs = snt.BatchApply(trunk)(inputs)
     
-    gru = snt.GRU(cell_size)
-    core_outputs, state_out = tf.nn.dynamic_rnn(
-        gru,
-        trunk_outputs,
-        initial_state=self.state_in[0],
-        time_major=True)
-    self.state_out = (state_out,)
+    if options.get("use_lstm"):
+      gru = snt.GRU(cell_size)
+      core_outputs, state_out = tf.nn.dynamic_rnn(
+          gru,
+          trunk_outputs,
+          initial_state=self.state_in[0],
+          time_major=True)
+      self.state_out = (state_out,)
+    else:
+      core_outputs = trunk_outputs
+      self.state_out = ()
 
     self.last_layer = snt.MergeDims(0, 2)(core_outputs)
     

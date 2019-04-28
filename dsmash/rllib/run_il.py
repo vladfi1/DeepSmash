@@ -50,7 +50,8 @@ config = {
     "is_time_major": True,
     #"max_seq_len": unroll_length,
     "use_lstm": True,
-    #"lstm_use_prev_action_reward": True,
+    "lstm_cell_size": 256,
+    "lstm_use_prev_action_reward": True,
     "fcnet_hiddens": [fc_width] * fc_depth,
   },
 }
