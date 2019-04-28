@@ -117,7 +117,8 @@ def check_valid(game, min_len=2):
 
 def get_supervised_data(game, discretize):
   player_ports = [i for i, player in enumerate(game.start.players) if player is not None]
-  assert(len(player_ports) == 2)
+  if len(player_ports) != 2:
+    raise InvalidGameError("got %d ports" % len(player_ports))
   
   state_action_series = [get_state_actions(player_ports, game.start, f, discretize) for f in game.frames]
   for rollout in zip(*state_action_series):
