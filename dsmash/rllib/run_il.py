@@ -15,6 +15,7 @@ parser.add_argument('--num_envs_per_worker', type=int)
 parser.add_argument('--cluster', action='store_true')
 parser.add_argument('--vec_env', action='store_true', help="batch using a single vectorized env")
 parser.add_argument('--gpu', action='store_true')
+parser.add_argument('--resume', action='store_true')
 args = parser.parse_args()
 
 
@@ -25,11 +26,11 @@ if args.cluster:
 else:
   ray.init(
     redis_max_memory=int(4e9),
-    object_store_memory=int(4e9),
+  #  object_store_memory=int(4e9),
   )
 
 unroll_length = 60
-train_batch_size = 128
+train_batch_size = 512
 fc_depth = 2
 fc_width = 256
 
@@ -51,7 +52,7 @@ config = {
     "use_lstm": True,
     #"lstm_use_prev_action_reward": True,
     "fcnet_hiddens": [fc_width] * fc_depth,
-  }
+  },
 }
 
 tune.run_experiments({
@@ -64,6 +65,7 @@ tune.run_experiments({
     #"run": agents.a3c.A2CAgent,
     "checkpoint_freq": 100,
     "config": config,
-  }
-})
-
+  }},
+  resume=args.resume,
+  raise_on_failed_trial=True,
+)

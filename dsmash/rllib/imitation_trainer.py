@@ -25,6 +25,17 @@ from dsmash import ssbm_actions
 from dsmash.rllib import ssbm_spaces, imitation_env
 from dsmash.rllib.model import HumanActionModel
 
+from tensorflow.python.client import device_lib
+
+def get_available_gpus():
+    local_device_protos = device_lib.list_local_devices()
+    return [x.name for x in local_device_protos if x.device_type == 'GPU']
+
+print(get_available_gpus())
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
+print(get_available_gpus())
+
 
 class ImitationPolicyGraph(VTracePolicyGraph):
   """PolicyGraph specialized for imitation learning.
@@ -40,10 +51,20 @@ class ImitationPolicyGraph(VTracePolicyGraph):
          action_space,
          config,
          existing_inputs=None):
+    #with tf.device("/gpu:1"):
+    self._init_helper(observation_space, action_space, config, existing_inputs)
+
+  def _init_helper(self,
+         observation_space,
+         action_space,
+         config,
+         existing_inputs=None):
+    print(get_available_gpus())
     config = dict(impala.impala.DEFAULT_CONFIG, **config)
     assert config["batch_mode"] == "truncate_episodes", \
       "Must use `truncate_episodes` batch mode with V-trace."
     self.config = config
+
     self.sess = tf.get_default_session()
     self.grads = None
     
