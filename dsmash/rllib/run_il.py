@@ -30,9 +30,6 @@ else:
 
 unroll_length = 60
 train_batch_size = 128
-num_workers = args.num_workers or 1
-num_envs = args.num_envs_per_worker or 1
-batch_inference = True  # multiple envs per worker
 fc_depth = 2
 fc_width = 256
 
@@ -41,15 +38,12 @@ exp_name = "imitation"
 
 config = {
   "data_path": args.data_path,
-  "num_gpus": (0.4 if batch_inference else 1) if args.gpu else 0,
-  "num_cpus_for_driver": 1,
+  "num_gpus": 1 if args.gpu else 0,
+  "num_cpus_for_driver": 2,
   "train_batch_size": unroll_length * train_batch_size,
   "sample_batch_size": unroll_length,
   #"soft_horizon": True,
-  "num_workers": num_workers if batch_inference else num_envs,
-  "num_gpus_per_worker": (0.1 if batch_inference else 0) if args.gpu else 0,
-  "num_cpus_per_worker": 1,
-  "num_envs_per_worker": 1 if vec_env else num_envs,
+  "num_workers": 0,
   # "remote_worker_envs": True,
   "model": {
     "is_time_major": True,
@@ -68,7 +62,7 @@ tune.run_experiments({
     "run": imitation_trainer.ImitationTrainer,
     #"run": agents.a3c.A3CAgent,
     #"run": agents.a3c.A2CAgent,
-    "checkpoint_freq": 5,
+    "checkpoint_freq": 100,
     "config": config,
   }
 })
