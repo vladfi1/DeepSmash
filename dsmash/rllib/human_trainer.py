@@ -78,6 +78,8 @@ class HumanPolicyGraph(VTracePolicyGraph):
         "Action space {} is not supported for IMPALA.".format(
           action_space))
 
+    assert is_multidiscrete
+
     if imitation:
       make_action_ph = lambda: ssbm_actions.make_ph(
           ssbm_actions.flat_repeated_config, batch_shape)
