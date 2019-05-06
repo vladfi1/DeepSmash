@@ -16,6 +16,7 @@ parser.add_argument('--cluster', action='store_true')
 parser.add_argument('--vec_env', action='store_true', help="batch using a single vectorized env")
 parser.add_argument('--gpu', action='store_true')
 parser.add_argument('--resume', action='store_true')
+parser.add_argument('--checkpoint_freq', type=int, default=100)
 args = parser.parse_args()
 
 
@@ -48,8 +49,8 @@ config = {
   # "remote_worker_envs": True,
   "autoregressive": True,
   "residual": True,
+  "imitation": True,
   "model": {
-    "is_time_major": True,
     #"max_seq_len": unroll_length,
     "use_lstm": True,
     "lstm_cell_size": 256,
@@ -66,7 +67,7 @@ tune.run_experiments({
     "run": imitation_trainer.ImitationTrainer,
     #"run": agents.a3c.A3CAgent,
     #"run": agents.a3c.A2CAgent,
-    "checkpoint_freq": 100,
+    "checkpoint_freq": args.checkpoint_freq,
     "config": config,
   }},
   resume=args.resume,

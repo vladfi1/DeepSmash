@@ -5,6 +5,7 @@ import sonnet as snt
 
 from ray import rllib
 from ray.rllib.models.catalog import ModelCatalog
+from ray.rllib.models import lstm
 
 from dsmash import ssbm_actions
 from dsmash.rllib import ssbm_spaces
@@ -24,7 +25,7 @@ class DelayedActionModel(rllib.models.Model):
         self.state_in,
         tf.expand_dims(input_dict["prev_actions"], 1)
     ], axis=1)
-    
+
     self.state_out = delayed_actions[:, 1:]
     
     embedded_delayed_actions = tf.one_hot(delayed_actions, num_outputs)
@@ -45,17 +46,17 @@ class DelayedActionModel(rllib.models.Model):
 
 class HumanActionModel(rllib.models.Model, snt.AbstractModule):
 
-  def __init__(self, *args, name="HumanActionModel", **kwargs):
+  def __init__(self, *args, name="HumanActionModel", imitation=False, **kwargs):
     snt.AbstractModule.__init__(self, name=name)
+    self._imitation = imitation
     with self._enter_variable_scope():
       self._value_head = snt.Linear(1, name="value_head")
 
     rllib.models.Model.__init__(self, *args, **kwargs)
-      
+
   def _build_layers_v2(self, input_dict, num_outputs, options):
-    assert options["is_time_major"]
     # make things time major?
-    return self(input_dict, num_outputs, options)[:2]
+    return self(input_dict, num_outputs, options)
 
   def _build(self, input_dict, num_outputs, options):
     if options.get("use_lstm"):
@@ -70,21 +71,29 @@ class HumanActionModel(rllib.models.Model, snt.AbstractModule):
       self.state_init = ()
       self.state_in = ()
 
-    obs_embed = ssbm_spaces.slippi_game_conv.embed(input_dict["obs"])
+    if self._imitation:
+      obs_embed = ssbm_spaces.slippi_conv_list[0].embed(input_dict["obs"])
+      prev_actions = input_dict["prev_actions"]
+    else:
+      obs_embed = input_dict["obs"]
+      prev_actions = tf.unstack(input_dict["prev_actions"], axis=-1)
     
     action_config = nest.flatten(ssbm_actions.repeated_simple_controller_config)
     prev_actions_embed = tf.concat([
         conv.embed(action) for conv, action
-        in zip(action_config, input_dict["prev_actions"])], -1)
+        in zip(action_config, prev_actions)], -1)
     
     prev_rewards_embed = tf.expand_dims(input_dict["prev_rewards"], -1)
+    inputs = tf.concat([obs_embed, prev_actions_embed, prev_rewards_embed], -1)
 
     trunk = snt.nets.MLP(
         output_sizes=options["fcnet_hiddens"],
         activation=getattr(tf.nn, options["fcnet_activation"]),
         activate_final=True)
 
-    inputs = tf.concat([obs_embed, prev_actions_embed, prev_rewards_embed], -1)
+    if not self._imitation:
+      inputs = lstm.add_time_dimension(inputs, self.seq_lens)
+
     trunk_outputs = snt.BatchApply(trunk)(inputs)
     
     if options.get("use_lstm"):
@@ -93,14 +102,13 @@ class HumanActionModel(rllib.models.Model, snt.AbstractModule):
           gru,
           trunk_outputs,
           initial_state=self.state_in[0],
-          time_major=True)
-      self.state_out = (state_out,)
+          sequence_length=None if self._imitation else self.seq_lens,
+          time_major=self._imitation)
+      self.state_out = [state_out]
     else:
       core_outputs = trunk_outputs
-      self.state_out = ()
+      self.state_out = []
 
-    self.last_layer = snt.MergeDims(0, 2)(core_outputs)
-    
     self._logit_head = snt.Linear(num_outputs, name="logit_head")
     logits = snt.BatchApply(self._logit_head)(core_outputs)
     self.values = tf.squeeze(snt.BatchApply(self._value_head)(core_outputs), -1)
@@ -108,7 +116,7 @@ class HumanActionModel(rllib.models.Model, snt.AbstractModule):
     return logits, core_outputs
 
   def value_function(self):
-    return self._value_head(self.last_layer)
+    return snt.MergeDims(0, 2)(self.values)
 
 
 def register():

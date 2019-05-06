@@ -5,6 +5,7 @@ from functools import partial
 import numpy as np
 from gym import spaces
 import tensorflow as tf
+import tensorflow_probability as tfp
 from tensorflow.python.util import nest
 import sonnet as snt
 
@@ -132,19 +133,15 @@ class Bernoulli(Dist):
 
   def sample(self, inputs):
     logits = tf.squeeze(self._linear(inputs), -1)
-    probs = tf.nn.sigmoid(logits)
-    uniform = tf.random.uniform(tf.shape(probs))
-    sample = tf.less(uniform, probs)
-    logp = -tf.nn.sigmoid_cross_entropy_with_logits(
-        labels=tf.to_float(sample),
-        logits=logits)
+    dist = tfp.distributions.Bernoulli(logits=logits, dtype=tf.bool)
+    sample = dist.sample()
+    logp = dist.log_prob(sample)
     return sample, logp
   
   def logp(self, inputs, sample):
     logits = tf.squeeze(self._linear(inputs), -1)
-    return -tf.nn.sigmoid_cross_entropy_with_logits(
-        labels=tf.to_float(sample),
-        logits=logits)  
+    dist = tfp.distributions.Bernoulli(logits=logits, dtype=sample.dtype)
+    return dist.log_prob(sample), dist.entropy()
 
   def embed(self, sample):
     return tf.expand_dims(tf.to_float(sample), -1)
@@ -160,18 +157,19 @@ class Categorical(Dist):
     
   def sample(self, inputs):
     logits = self._linear(inputs)
-    sample = tf.squeeze(tf.random.categorical(logits, 1), -1)
-    logp = -tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=logits, labels=sample)
+    dist = tfp.distributions.Categorical(logits=logits, dtype=tf.int64)
+    sample = dist.sample()
+    logp = dist.log_prob(sample)
     return sample, logp
-  
+
   def logp(self, inputs, x):
     logits = self._linear(inputs)
-    return -tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=logits, labels=x)
-  
+    dist = tfp.distributions.Categorical(logits=logits, dtype=x.dtype)
+    return dist.log_prob(x), dist.entropy()
+
   def embed(self, x):
     return tf.one_hot(x, self._size)
+
 
 class AutoRegressive(Dist):
 
@@ -213,19 +211,24 @@ class AutoRegressive(Dist):
     return sample_struct, logp
 
   def logp(self, inputs, sample_struct):
+    sample_flat = nest.flatten(sample_struct)
+    assert len(sample_flat) == len(self._dist_flat)
+
     logps = []
-    
-    for i, (sample, dist) in enumerate(zip(
-        nest.flatten(sample_struct), self._dist_flat)):
-      logp = dist.logp(inputs, sample)
+    entropies = []
+
+    for i, (sample, dist) in enumerate(zip(sample_flat, self._dist_flat)):
+      logp, entropy = dist.logp(inputs, sample)
       logps.append(logp)
+      entropies.append(entropy)
+
       sample_repr = dist.embed(sample)
       if self._residual:
         inputs += self._get_residual(i, inputs.shape[-1])(sample_repr)
       else:
         inputs = tf.concat([inputs, sample_repr], -1)
     
-    return tf.add_n(logps)
+    return tf.add_n(logps), tf.add_n(entropies)
 
   def embed(self, sample_struct):
     embeddings = []

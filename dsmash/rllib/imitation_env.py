@@ -133,12 +133,12 @@ class ImitationEnv(rllib.env.BaseEnv):
     if self._flat_obs:
       self.observation_space = gym.spaces.Box(
         low=-10, high=10,
-        shape=(ssbm_spaces.slippi_game_conv.flat_size,),
+        shape=(ssbm_spaces.slippi_conv_list[0].flat_size,),
         dtype=np.float32)
-      self._conv = ssbm_spaces.slippi_game_conv.make_flat
+      self._conv = ssbm_spaces.slippi_conv_list[0].make_flat
     else:
-      self.observation_space = ssbm_spaces.slippi_game_conv.space
-      self._conv = ssbm_spaces.slippi_game_conv
+      self.observation_space = ssbm_spaces.slippi_conv_list[0].space
+      self._conv = ssbm_spaces.slippi_conv_list[0]
 
     self.action_space = ssbm_actions.to_multidiscrete(
         ssbm_actions.repeated_simple_controller_config)
