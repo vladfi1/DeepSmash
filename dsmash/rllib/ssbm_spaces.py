@@ -270,13 +270,13 @@ player_spec = [
 player_conv = partial(StructConv, player_spec)
 stage_conv = partial(DiscreteConv, 32)
 
-def make_game_spec(self=0, enemy=1, swap=False):
+def make_game_spec(self=0, enemy=1, swap=False, conv=player_conv):
   players = [self, enemy]
   if swap:
     players.reverse()
   
   return [
-    ('players', partial(ArrayConv, player_conv, players)),
+    ('players', partial(ArrayConv, conv, players)),
     ('stage', stage_conv),
   ]
 
@@ -305,17 +305,16 @@ slippi_player_spec = [
 ]
 
 slippi_player_conv = partial(StructConv, slippi_player_spec)
+make_slippi_game_spec = partial(make_game_spec, conv=slippi_player_conv)
 
-slippi_game_spec = [
-  ('players', partial(ArrayConv, slippi_player_conv, [0, 1])),
-  ('stage', stage_conv),
+# maps pid to Conv
+slippi_conv_list = [
+  StructConv(make_slippi_game_spec(swap=False), name='slippi-0'),
+  StructConv(make_slippi_game_spec(swap=True), name='slippi-1'),
 ]
 
-slippi_game_conv = StructConv(slippi_game_spec, name='slippi')
-
 def get_slippi_conv(pid):
-  assert pid == 0
-  return slippi_game_conv
+  return slippi_conv_list[pid]
 
 CONVS['slippi'] = get_slippi_conv
 

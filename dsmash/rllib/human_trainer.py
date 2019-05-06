@@ -9,6 +9,7 @@ import gym
 from gym import spaces
 
 from ray.rllib.evaluation.metrics import LEARNER_STATS_KEY
+from ray.rllib.evaluation.policy_graph import PolicyGraph
 from ray.rllib.evaluation.sample_batch import SampleBatch, DEFAULT_POLICY_ID
 from ray.rllib.utils.explained_variance import explained_variance
 from ray.rllib.utils.annotations import override
@@ -18,6 +19,7 @@ from ray.rllib.evaluation.tf_policy_graph import TFPolicyGraph, \
 from ray.rllib.models.catalog import ModelCatalog
 
 from ray.rllib.agents import impala, Trainer, trainer
+from ray.rllib.agents.impala import vtrace
 from ray.rllib.agents.impala.vtrace_policy_graph import VTracePolicyGraph
 
 from dsmash import util
@@ -25,25 +27,11 @@ from dsmash import ssbm_actions
 from dsmash.rllib import ssbm_spaces, imitation_env
 from dsmash.rllib.model import HumanActionModel
 
-from tensorflow.python.client import device_lib
 
-def get_available_gpus():
-  local_device_protos = device_lib.list_local_devices()
-  return [x.name for x in local_device_protos if x.device_type == 'GPU']
-
-print(get_available_gpus())
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-print(get_available_gpus())
-
-
-class ImitationPolicyGraph(VTracePolicyGraph):
-  """PolicyGraph specialized for imitation learning.
+class HumanPolicyGraph(VTracePolicyGraph):
+  """PolicyGraph compatible with imitation learning.
   
-  Only works with ImitationTrainer and HumanActionModel.
-  ImitationTrainer creates pseudo-SampleBatches which are time-major nests.
-  
-  TODO: preserve compatibility with ImitationEnv
+  Only works with HumanActionTrainer and HumanActionModel.
   """
 
   def __init__(self,
@@ -59,8 +47,7 @@ class ImitationPolicyGraph(VTracePolicyGraph):
          action_space,
          config,
          existing_inputs=None):
-    print(get_available_gpus())
-    config = dict(impala.impala.DEFAULT_CONFIG, **config)
+    config = dict(DEFAULT_CONFIG, **config)
     assert config["batch_mode"] == "truncate_episodes", \
       "Must use `truncate_episodes` batch mode with V-trace."
     self.config = config
@@ -69,6 +56,7 @@ class ImitationPolicyGraph(VTracePolicyGraph):
     self.grads = None
     
     imitation = config["imitation"]
+    assert not imitation
     
     if imitation:
       T = config["sample_batch_size"]
@@ -95,7 +83,7 @@ class ImitationPolicyGraph(VTracePolicyGraph):
           ssbm_actions.flat_repeated_config, batch_shape)
       actions = make_action_ph()
       prev_actions = make_action_ph()
-    else:
+    else:  # actions are stacked "multidiscrete"
       actions = tf.placeholder(tf.int64, actions_shape, name="actions")
       prev_actions = tf.placeholder(tf.int64, actions_shape, name="prev_actions")
 
@@ -107,6 +95,7 @@ class ImitationPolicyGraph(VTracePolicyGraph):
     else:
       observations = tf.placeholder(
           tf.float32, [None] + list(observation_space.shape))
+      behavior_logp = tf.placeholder(tf.float32, batch_shape)
 
     existing_state_in = None
     existing_seq_lens = None
@@ -135,56 +124,102 @@ class ImitationPolicyGraph(VTracePolicyGraph):
       state_in=existing_state_in,
       seq_lens=existing_seq_lens)
 
+    # HumanActionModel doesn't flatten outputs
+    flat_outputs = snt.MergeDims(0, 2)(self.model.outputs)
+
     if autoregressive:
       action_dist = ssbm_actions.AutoRegressive(
           nest.map_structure(
               lambda conv: conv.build_dist(),
               ssbm_actions.flat_repeated_config),
           residual=config.get("residual"))
-      actions_logp = snt.BatchApply(action_dist.logp)(
-          self.model.outputs, actions)
-      action_sampler, sampled_logp = snt.BatchApply(
-          action_dist.sample)(self.model.outputs)
-      sampled_prob = tf.exp(sampled_logp)
+      actions_logp, actions_entropy = action_dist.logp(
+          flat_outputs, tf.unstack(actions, axis=-1))
+      action_sampler, self.sampled_logp = action_dist.sample(flat_outputs)
+      action_sampler = tf.stack([
+          tf.cast(t, tf.int64) for t in nest.flatten(action_sampler)], axis=-1)
+      sampled_prob = tf.exp(self.sampled_logp)
     else:
-      dist_inputs = tf.split(self.model.outputs, output_hidden_shape, axis=-1)
-      action_dist = dist_class(snt.MergeDims(0, 2)(dist_inputs))
+      dist_inputs = tf.split(flat_outputs, output_hidden_shape, axis=-1)
+      action_dist = dist_class(dist_inputs)
       int64_actions = [tf.cast(x, tf.int64) for x in actions]
-      actions_logp = action_dist.logp(snt.MergeDims(0, 2)(int64_actions))
+      actions_logp = action_dist.logp(int64_actions)
+      actions_entropy = action_dist.entropy()
       action_sampler = action_dist.sample()
-      sampled_prob = action_dist.sampled_action_prob(),
+      sampled_prob = action_dist.sampled_action_prob()
+      self.sampled_logp = tf.log(sampled_prob)
 
     self.var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                       tf.get_variable_scope().name)
 
-    # actual loss computation
-    imitation_loss = -tf.reduce_mean(actions_logp)
-    
-    tm_values = self.model.values
-    baseline_values = tm_values[:-1]
-    
-    if config.get("soft_horizon"):
-      discounts = config["gamma"]
-    else:
-      discounts = tf.to_float(~dones[:-1]) * config["gamma"]
-    
-    td_lambda = trfl.td_lambda(
-        state_values=baseline_values,
-        rewards=rewards[:-1],
-        pcontinues=discounts,
-        bootstrap_value=tm_values[-1],
-        lambda_=config.get("lambda", 1.))
+    def make_time_major(tensor, drop_last=False):
+      """Swaps batch and trajectory axis.
+      Args:
+        tensor: A tensor or list of tensors to reshape.
+        drop_last: A bool indicating whether to drop the last
+        trajectory item.
+      Returns:
+        res: A tensor with swapped axes or a list of tensors with
+        swapped axes.
+      """
+      if isinstance(tensor, list):
+        return [make_time_major(t, drop_last) for t in tensor]
 
-    # td_lambda.loss has shape [B] after a reduce_sum
-    vf_loss = tf.reduce_mean(td_lambda.loss) / T
+      if self.model.state_init:
+        B = tf.shape(self.model.seq_lens)[0]
+        T = tf.shape(tensor)[0] // B
+      else:
+        # Important: chop the tensor into batches at known episode cut
+        # boundaries. TODO(ekl) this is kind of a hack
+        T = self.config["sample_batch_size"]
+        B = tf.shape(tensor)[0] // T
+      rs = tf.reshape(tensor,
+              tf.concat([[B, T], tf.shape(tensor)[1:]], axis=0))
+
+      # swap B and T axes
+      res = tf.transpose(
+        rs,
+        [1, 0] + list(range(2, 1 + int(tf.shape(tensor).shape[0]))))
+
+      if drop_last:
+        return res[:-1]
+      return res
+
+    # actual loss computation
+    values_tm = make_time_major(self.model.value_function())
+    baseline_values = values_tm[:-1]
+    actions_logp_tm = make_time_major(actions_logp)
+    behavior_logp_tm = make_time_major(behavior_logp)
+    log_rhos_tm = actions_logp_tm - behavior_logp_tm
+
+    discounts = tf.fill(tf.shape(baseline_values), config["gamma"])
+    if not config.get("soft_horizon"):
+      discounts *= tf.to_float(~make_time_major(dones, True))
     
-    self.total_loss = imitation_loss + self.config["vf_loss_coeff"] * vf_loss
+    vtrace_returns = vtrace.from_importance_weights(
+        log_rhos=log_rhos_tm[:-1],
+        discounts=discounts,
+        rewards=make_time_major(rewards, True),
+        values=baseline_values,
+        bootstrap_value=values_tm[-1])
+
+    vf_loss = tf.reduce_mean(tf.squared_difference(
+        vtrace_returns.vs, baseline_values))
+    pi_loss = tf.reduce_mean(actions_logp_tm * vtrace_returns.pg_advantages)
+    entropy_mean = tf.reduce_mean(actions_entropy)
+
+    total_loss = pi_loss
+    total_loss += self.config["vf_loss_coeff"] * vf_loss
+    total_loss -= self.config["entropy_coeff"] * entropy_mean
+    self.total_loss = total_loss        
+
+    kl_mean = -tf.reduce_mean(log_rhos_tm)
 
     # Initialize TFPolicyGraph
     loss_in = [
       (SampleBatch.ACTIONS, actions),
       (SampleBatch.DONES, dones),
-      # (BEHAVIOUR_LOGITS, behaviour_logits),
+      ("behavior_logp", behavior_logp),
       (SampleBatch.REWARDS, rewards),
       (SampleBatch.CUR_OBS, observations),
       (SampleBatch.PREV_ACTIONS, prev_actions),
@@ -219,100 +254,55 @@ class ImitationPolicyGraph(VTracePolicyGraph):
     self.stats_fetches = {
       LEARNER_STATS_KEY: {
         "cur_lr": tf.cast(self.cur_lr, tf.float64),
-        "imitation_loss": imitation_loss,
-        #"entropy": self.loss.entropy,
+        "pi_loss": pi_loss,
+        "entropy": entropy_mean,
         "grad_gnorm": tf.global_norm(self._grads),
         "var_gnorm": tf.global_norm(self.var_list),
         "vf_loss": vf_loss,
         "vf_explained_var": explained_variance(
-          tf.reshape(td_lambda.extra.discounted_returns, [-1]),
+          tf.reshape(vtrace_returns.vs, [-1]),
           tf.reshape(baseline_values, [-1])),
+        "kl_mean": kl_mean,
       },
-      "state_out": self.model.state_out,
     }
 
-  @override(VTracePolicyGraph)
-  def _get_loss_inputs_dict(self, batch):
-    feed = {}
-    def add_feed(ph, val):
-      feed[ph] = val
-    util.deepZipWith(add_feed, self._loss_input_dict, batch)
-    return feed
+  @override(TFPolicyGraph)
+  def copy(self, existing_inputs):
+    raise NotImplementedError
+
+  @override(TFPolicyGraph)
+  def extra_compute_action_fetches(self):
+    return dict(
+        TFPolicyGraph.extra_compute_action_fetches(self),
+        **{"behavior_logp": self.sampled_logp})
+
+  @override(PolicyGraph)
+  def postprocess_trajectory(self,
+                             sample_batch,
+                             other_agent_batches=None,
+                             episode=None):
+    # not used, so save some bandwidth
+    del sample_batch.data[SampleBatch.NEXT_OBS]
+    return sample_batch
 
 DEFAULT_CONFIG = trainer.with_base_config(impala.DEFAULT_CONFIG, {
   "data_path": None,
   "autoregressive": False,
   "residual": False,
-  "imitation": True,
+  "imitation": False,
 })
 
-class DummyTrainer(impala.ImpalaTrainer):
-  """Imitation learning."""
+
+class HumanTrainer(impala.ImpalaTrainer):
+  """VTrace with human action space.."""
   
-  _name = "IMITATION"
+  _name = "HumanAction"
   _default_config = DEFAULT_CONFIG
-  _policy_graph = ImitationPolicyGraph
+  _policy_graph = HumanPolicyGraph
   
   def __setstate__(self, state):
     self.local_evaluator.policy_map[DEFAULT_POLICY_ID].set_state(state)
 
-class ImitationTrainer(impala.ImpalaTrainer):
-  """Imitation learning."""
-  
-  _name = "IMITATION"
-  _default_config = DEFAULT_CONFIG
-  _policy_graph = ImitationPolicyGraph
-  
-
-  @override(impala.ImpalaTrainer)
-  def _init(self, config, env_creator):
-    self.sess = tf.Session(config=tf.ConfigProto(**config["tf_session_args"]))
-
-    with self.sess.as_default():
-      self.policy_graph = ImitationPolicyGraph(
-        ssbm_spaces.slippi_conv_list[0].space,
-        ssbm_actions.repeated_simple_controller_space,
-        config)
-
-    train_batches = config["train_batch_size"] // config["sample_batch_size"]
-    tile = lambda x: np.array([x] * train_batches)
-    self.state_init = nest.map_structure(
-        tile, self.policy_graph.model.state_init)
-    self._readers = [
-        imitation_env.GameReader(config["data_path"])
-        for _ in range(train_batches)]
-  
   def __getstate__(self):
-    return self.policy_graph.get_state()
-  
-  def __setstate__(self, state):
-    self.policy_graph.set_state(state)
-
-  def train_step(self):
-    sample_batches = [
-        reader.get_sample_batch(self.config["sample_batch_size"])
-        for reader in self._readers]
-    sample_batch = nest.map_structure(
-        lambda *xs: np.stack(xs, 1), *sample_batches)
-    sample_batch["state_in"] = self.state_init
-    stats_fetches = self.policy_graph.learn_on_batch(sample_batch)
-    self.state_init = stats_fetches["state_out"]
-    return stats_fetches
-
-  @override(Trainer)
-  def _train(self):
-    start = time.time()
-    stats_fetches = self.train_step()
-    del stats_fetches["state_out"]
-    steps = 1
-    while time.time() - start < self.config["min_iter_time_s"]:
-      self.train_step()
-      steps += 1
-    throughput = self.config["train_batch_size"] * steps / (time.time() - start)
-    result = {}
-    result.update(
-        timesteps_this_iter=steps,
-        train_throughput=throughput,
-        **stats_fetches)
-    return result
+    self.local_evaluator.policy_map[DEFAULT_POLICY_ID].get_state()
 

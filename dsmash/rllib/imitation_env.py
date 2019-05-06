@@ -30,15 +30,22 @@ def get_data(data_path):
   with open(data_path, 'rb') as f:
     return pickle.load(f)
 
+@functools.lru_cache()
+def get_data_multi(data_paths):
+  data = []
+  for path in data_paths:
+    data.extend(get_data(path))
+
+  total_actions = sum(len(game.state.stage) for game in data)
+  total_frames = sum((game.action.repeat + 1).sum() for game in data)
+  print("Loaded %d games, %d actions, %d frames" %
+      (len(data), total_actions, total_frames))
+
+  return data
+
 class GameReader:
   def __init__(self, data_paths):
-    data = []
-    for path in data_paths:
-      data.extend(get_data(path))
-    total_actions = sum(len(game.state.stage) for game in data)
-    total_frames = sum((game.action.repeat + 1).sum() for game in data)
-    print("Loaded %d games, %d actions, %d frames" %
-        (len(data), total_actions, total_frames))
+    data = get_data_multi(tuple(data_paths))
     self._games = data
     self._game = None
 
@@ -126,12 +133,12 @@ class ImitationEnv(rllib.env.BaseEnv):
     if self._flat_obs:
       self.observation_space = gym.spaces.Box(
         low=-10, high=10,
-        shape=(ssbm_spaces.slippi_game_conv.flat_size,),
+        shape=(ssbm_spaces.slippi_conv_list[0].flat_size,),
         dtype=np.float32)
-      self._conv = ssbm_spaces.slippi_game_conv.make_flat
+      self._conv = ssbm_spaces.slippi_conv_list[0].make_flat
     else:
-      self.observation_space = ssbm_spaces.slippi_game_conv.space
-      self._conv = ssbm_spaces.slippi_game_conv
+      self.observation_space = ssbm_spaces.slippi_conv_list[0].space
+      self._conv = ssbm_spaces.slippi_conv_list[0]
 
     self.action_space = ssbm_actions.to_multidiscrete(
         ssbm_actions.repeated_simple_controller_config)

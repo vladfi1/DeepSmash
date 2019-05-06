@@ -10,7 +10,7 @@ import gym
 import ray
 from ray import rllib
 
-from dsmash import ssbm, action
+from dsmash import ssbm, ssbm_actions
 from dsmash.env.ssbm_env import SSBMEnv
 from dsmash.rllib import ssbm_spaces
 
@@ -31,23 +31,23 @@ class FixedActionMap:
 
 class SimpleActionMap:
   def __init__(self, config):
-    self._action_config = action.simple_controller_config
-    self.action_space = action.to_multidiscrete(self._action_config)
+    self._action_config = ssbm_actions.simple_controller_config
+    self.action_space = ssbm_actions.to_multidiscrete(self._action_config)
 
   def get_controllers(self, flat_simple_controller, _):
     simple_controller = nest.pack_sequence_as(
         self._action_config, flat_simple_controller.tolist())
-    return [action.to_raw(self._action_config, simple_controller)]
+    return [ssbm_actions.to_raw(self._action_config, simple_controller)]
 
 class RepeatActionMap:
   def __init__(self, config):
-    self._action_config = action.repeated_simple_controller_config
-    self.action_space = action.to_multidiscrete(self._action_config)
+    self._action_config = ssbm_actions.repeated_simple_controller_config
+    self.action_space = ssbm_actions.to_multidiscrete(self._action_config)
 
   def get_controllers(self, flat_repeat_controller, _):
     repeat_controller = nest.pack_sequence_as(
         self._action_config, flat_repeat_controller.tolist())
-    return [action.to_raw(self._action_config.action, repeat_controller.action)] * (repeat_controller.repeat + 1)
+    return [ssbm_actions.to_raw(self._action_config.action, repeat_controller.action)] * (repeat_controller.repeat + 1)
 
 # TODO: separate action map per agent?
 def get_action_map(config):
