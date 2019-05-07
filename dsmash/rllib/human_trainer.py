@@ -190,8 +190,8 @@ class HumanPolicyGraph(VTracePolicyGraph):
     # actual loss computation
     values_tm = make_time_major(self.model.value_function())
     baseline_values = values_tm[:-1]
-    actions_logp_tm = make_time_major(actions_logp)
-    behavior_logp_tm = make_time_major(behavior_logp)
+    actions_logp_tm = make_time_major(actions_logp, True)
+    behavior_logp_tm = make_time_major(behavior_logp, True)
     log_rhos_tm = actions_logp_tm - behavior_logp_tm
 
     discounts = tf.fill(tf.shape(baseline_values), config["gamma"])
@@ -199,7 +199,7 @@ class HumanPolicyGraph(VTracePolicyGraph):
       discounts *= tf.to_float(~make_time_major(dones, True))
     
     vtrace_returns = vtrace.from_importance_weights(
-        log_rhos=log_rhos_tm[:-1],
+        log_rhos=log_rhos_tm,
         discounts=discounts,
         rewards=make_time_major(rewards, True),
         values=baseline_values,
@@ -207,7 +207,7 @@ class HumanPolicyGraph(VTracePolicyGraph):
 
     vf_loss = tf.reduce_mean(tf.squared_difference(
         vtrace_returns.vs, baseline_values))
-    pi_loss = tf.reduce_mean(actions_logp_tm * vtrace_returns.pg_advantages)
+    pi_loss = -tf.reduce_mean(actions_logp_tm * vtrace_returns.pg_advantages)
     entropy_mean = tf.reduce_mean(actions_entropy)
 
     total_loss = pi_loss
@@ -247,9 +247,6 @@ class HumanPolicyGraph(VTracePolicyGraph):
       seq_lens=self.model.seq_lens,
       max_seq_len=self.config["model"]["max_seq_len"],
       batch_divisibility_req=self.config["sample_batch_size"])
-
-    self._loss_input_dict = dict(
-        self._loss_inputs, state_in=self._state_inputs)
 
     self.sess.run(tf.global_variables_initializer())
 

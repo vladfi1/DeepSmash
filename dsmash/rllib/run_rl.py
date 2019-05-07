@@ -29,7 +29,7 @@ else:
   )
 
 unroll_length = 60
-train_batch_size = 128
+train_batch_size = 128 if args.gpu else 2
 num_workers = args.num_workers or 1
 num_envs = args.num_envs_per_worker or 1
 async_env = True
