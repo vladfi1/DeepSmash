@@ -33,7 +33,7 @@ def get_available_gpus():
 
 print(get_available_gpus())
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 print(get_available_gpus())
 
 
