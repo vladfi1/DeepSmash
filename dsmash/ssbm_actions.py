@@ -9,7 +9,7 @@ import tensorflow_probability as tfp
 from tensorflow.python.util import nest
 import sonnet as snt
 
-from dsmash.slippi.types import *
+from dsmash.slippi.slippi_types import *
 
 
 class Convertor:

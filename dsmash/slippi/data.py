@@ -10,7 +10,7 @@ import slippi
 from slippi import Game, event
 
 from dsmash.ssbm_actions import discrete_trigger, discrete_stick
-from dsmash.slippi.types import *
+from dsmash.slippi.slippi_types import *
 
 Buttons = event.Buttons
 Physical = Buttons.Physical
@@ -201,6 +201,7 @@ def create_np_dataset(replay_path, compress=False, discretize=False):
     for fname in filenames:
       stream_files.append(os.path.join(dirpath, fname))
 
+  print("Found %s files." % len(stream_files))
   rollouts = load_supervised_data(stream_files, discretize)
   if compress:
     rollouts = map(compress_repeated_actions, rollouts)

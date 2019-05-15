@@ -160,7 +160,7 @@ class Pad:
     self.flush()
   
   def send_simple_controller(self, controller):
-    """Sends a dsmash.slippi.types.SimpleController."""
+    """Sends a dsmash.slippi.slippi_types.SimpleController."""
     for name, value in zip(slippi_buttons, controller.buttons):
       button = NAME_TO_BUTTON[name]  # TODO: shortcut this
       if value:
