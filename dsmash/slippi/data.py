@@ -182,7 +182,7 @@ def load_supervised_data(replay_files, discretize):
   print(valid_files, len(replay_files))
 
 
-def create_np_dataset(replay_path, compress=False, discretize=False):
+def create_np_dataset(replay_path, compress=False, discretize=False, as_dict=True):
   discretize = compress or discretize
 
   suffix = '_raw'
@@ -206,8 +206,10 @@ def create_np_dataset(replay_path, compress=False, discretize=False):
   if compress:
     rollouts = map(compress_repeated_actions, rollouts)
   rollouts_np = list(map(nt_to_np, rollouts))
+  if as_dict:
+    rollouts_np = util.nt_to_dict(rollouts_np)
+
   rollouts_np_pkl = pickle.dumps(rollouts_np)
-  
   print(len(rollouts_np_pkl))
   
   save_dir = save_path.rsplit('/', 1)[0]

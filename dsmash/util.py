@@ -88,10 +88,12 @@ def deepZip(*objs):
 def deepZipWith(f, *objs):
   if len(objs) == 0:
     return []
-  
+
   first = objs[0]
   if isinstance(first, dict):
     return {k : deepZipWith(f, *[obj[k] for obj in objs]) for k in first}
+  if hasattr(first, '_fields'):  # namedtuples
+    return type(first)(*[deepZipWith(f, *vals) for vals in zip(*objs)])
   if isinstance(first, (list, tuple)):
     return type(first)(deepZipWith(f, *vals) for vals in zip(*objs))
   return f(*objs)
@@ -226,4 +228,25 @@ def load_params(path, key=None):
   
   params.update(path=path)
   return params
+
+
+def nt_to_dict(obj):
+  if hasattr(obj, '_fields'):
+    d = {}
+    for k in obj._fields:
+      d[k] = nt_to_dict(getattr(obj, k))
+    return d
+  if isinstance(obj, dict):
+    return {k: nt_to_dict(v) for k, v in obj.items()}
+  if isinstance(obj, (tuple, list)):
+    return type(obj)(map(nt_to_dict, obj))
+  return obj
+
+
+def dict_to_nt(nt, dicts):
+  if hasattr(nt, '_fields'):
+    return type(nt)(*[
+        dict_to_nt(getattr(nt, field), dicts[field])
+        for field in nt._fields])
+  return dicts
 

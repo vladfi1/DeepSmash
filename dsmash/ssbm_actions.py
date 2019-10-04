@@ -9,8 +9,8 @@ import tensorflow_probability as tfp
 from tensorflow.python.util import nest
 import sonnet as snt
 
+from dsmash import util
 from dsmash.slippi.slippi_types import *
-
 
 class Convertor:
   def to_raw(self, x):
@@ -170,7 +170,6 @@ class Categorical(Dist):
   def embed(self, x):
     return tf.one_hot(x, self._size)
 
-
 class AutoRegressive(Dist):
 
   def __init__(self, dist_struct, residual=False, name='AutoRegressive'):
@@ -211,6 +210,8 @@ class AutoRegressive(Dist):
     return sample_struct, logp
 
   def logp(self, inputs, sample_struct):
+    if isinstance(sample_struct, dict):
+      sample_struct = util.dict_to_nt(self._dist_struct, sample_struct)
     sample_flat = nest.flatten(sample_struct)
     assert len(sample_flat) == len(self._dist_flat)
 
@@ -231,8 +232,11 @@ class AutoRegressive(Dist):
     return tf.add_n(logps), tf.add_n(entropies)
 
   def embed(self, sample_struct):
+    if isinstance(sample_struct, dict):
+      sample_struct = util.dict_to_nt(self._dist_struct, sample_struct)
+
     embeddings = []
     for sample, dist in zip(nest.flatten(sample_struct), self._dist_flat):
-      embeeddings.append(dist.embed(sample))
+      embeddings.append(dist.embed(sample))
     return tf.concat(embeddings, -1)
 
