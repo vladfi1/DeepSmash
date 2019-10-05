@@ -154,6 +154,7 @@ class Trainer(Default):
 
       current_time = time.time()
       if current_time - last_logged > self.log_interval:
+        last_logged = current_time
         total_time = current_time - start_time
         total_steps = steps_per_iter * iters
         print(to_log)
